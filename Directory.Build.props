@@ -13,12 +13,12 @@
     <Company>Tekthar</Company>
     <Copyright>Copyright 2026 AbpGuard contributors</Copyright>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/todahq/toda-guard</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/todahq/toda-guard.git</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/tekthar/abp-guard</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tekthar/abp-guard.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>identity;authentication;authorization;abp;openiddict;casl;two-factor;postgresql</PackageTags>
-    <PackageReleaseNotes>https://github.com/todahq/toda-guard/blob/main/CHANGELOG.md</PackageReleaseNotes>
+    <PackageReleaseNotes>https://github.com/tekthar/abp-guard/blob/main/CHANGELOG.md</PackageReleaseNotes>
 
     <!-- Debugging into the packages: SourceLink (built into the .NET SDK) and a symbol package next to each .nupkg. -->
     <PublishRepositoryUrl>true</PublishRepositoryUrl>

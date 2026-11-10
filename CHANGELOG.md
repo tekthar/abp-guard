@@ -12,6 +12,8 @@ Toda.Guard is now AbpGuard, a product of its own. Same code, tables and migratio
 namespaces, with neutral defaults for every name it writes. A host that ran Toda.Guard keeps its sessions, tokens and
 protected data by setting the names it shipped with: see `docs/upgrading.md`.
 
+The repository moved to [tekthar/abp-guard](https://github.com/tekthar/abp-guard), with its history.
+
 ### Changed
 
 - **Packages and namespaces:** `Toda.Guard.Contracts`, `Toda.Guard.Acting` and `Toda.Guard` are `AbpGuard.Contracts`,
