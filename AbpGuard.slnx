@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AbpGuard.Contracts/AbpGuard.Contracts.csproj" />
+    <Project Path="src/AbpGuard.Acting/AbpGuard.Acting.csproj" />
+    <Project Path="src/AbpGuard/AbpGuard.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/AbpGuard.SampleHost/AbpGuard.SampleHost.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AbpGuard.Tests/AbpGuard.Tests.csproj" />
+    <Project Path="tests/AbpGuard.Host.Tests/AbpGuard.Host.Tests.csproj" />
+  </Folder>
+</Solution>

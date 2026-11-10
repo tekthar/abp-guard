@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <Description>A host of Guard alone: Guard's own modules and defaults, nothing of any product's. What another product does to use Guard, and what AbpGuard.Host.Tests proves.</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AbpGuard\AbpGuard.csproj" />
+    <PackageReference Include="Volo.Abp.Autofac" Version="$(AbpVersion)" />
+  </ItemGroup>
+
+</Project>

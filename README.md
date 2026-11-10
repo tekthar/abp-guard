@@ -1,8 +1,7 @@
-# Toda Guard
+# AbpGuard
 
-Accounts, sign-in and authorization for ABP applications on .NET 10 and PostgreSQL. Guard is the identity module of
-Toda, an open-source work management platform, packaged so other products can use the same code instead of writing
-their own security.
+Accounts, sign-in and authorization for ABP applications on .NET 10 and PostgreSQL, as a package any product can use
+instead of writing its own security. Nothing in it assumes one product: every name it writes is a setting.
 
 > **Preview.** 0.x versions may change their API in any minor version (SemVer). Pin an exact version.
 
@@ -25,23 +24,23 @@ Guard keeps its tables in the `guard` schema of the host's database, or in a dat
 
 ## Packages
 
-On [nuget.org](https://www.nuget.org/packages?q=Toda.Guard):
+On [nuget.org](https://www.nuget.org/packages?q=AbpGuard):
 
 | Package | What it holds |
 |---|---|
-| `Toda.Guard.Contracts` | The public contracts: lookups, the directory connector interface, account and group events. No ABP, EF Core or OpenIddict. |
-| `Toda.Guard.Acting` | The acting context (whose rights a request uses and who acts), step-up, read-only requests, error codes, the names Guard writes. |
-| `Toda.Guard` | The ABP module: domain, services, controllers, the EF Core contexts and their migrations. |
+| `AbpGuard.Contracts` | The public contracts: lookups, the directory connector interface, account and group events. No ABP, EF Core or OpenIddict. |
+| `AbpGuard.Acting` | The acting context (whose rights a request uses and who acts), step-up, read-only requests, error codes, the names Guard writes. |
+| `AbpGuard` | The ABP module: domain, services, controllers, the EF Core contexts and their migrations. |
 
 ## Use it in a host
 
-`samples/Toda.Guard.SampleHost` is a complete host with Guard's defaults only. In short:
+`samples/AbpGuard.SampleHost` is a complete host with Guard's defaults only. In short:
 
 ```csharp
 builder.Host.UseAutofac();
 // Guard protects secrets with the Data Protection key ring: keep it in Guard's database so every server reads the same keys.
 builder.Services.AddDataProtection().SetApplicationName("my-product").AddGuardKeyRing();
-await builder.AddApplicationAsync<MyHostModule>();   // [DependsOn(typeof(TodaGuardModule))]
+await builder.AddApplicationAsync<MyHostModule>();   // [DependsOn(typeof(AbpGuardModule))]
 
 WebApplication app = builder.Build();
 await GuardDatabase.MigrateAsync(app.Services);
@@ -56,17 +55,21 @@ Configure it in the `Guard` section (`GuardOptions`):
 - **Addresses:** `PublicUrl` is where people reach the host. `Pages` holds the paths of the pages Guard's mails link to.
   A path may contain `{lang}`, such as `/{lang}/reset-password`. A mailed link puts the recipient's language there, or
   the site's first language when the recipient has none.
-- **Names:** `Cookies` holds the cookie names (`toda_session`, `toda_csrf`, `toda_embedded`), `Clients` the OAuth
-  clients, and `ApiScope` the scope of your own API (`toda.api`).
+- **Names:** `Cookies` holds the cookie names (`guard_session`, `guard_csrf`, `guard_embedded`), `Clients` the OAuth
+  clients (`web`, `mobile`), `ApiScope` the scope of your own API (`api`), and `AdminsGroupName` and `Seed` the groups
+  the first start makes (`admins`, `users`).
 - **Stored and wire names:** `Guard:Names` (`GuardNames`) holds what Guard writes into tokens, headers, stored rows and
-  protected data: the claims, the anti-forgery header (`X-Toda-Csrf`), the token prefix (`toda_pat_`), the app id and
-  secret prefixes, the read scope, the second step's grant type and the Data Protection purposes' prefix. Choose them
-  before your first release: changing one later breaks whatever already holds the old one.
+  protected data: the claims (`guard_token` and the like), the anti-forgery header (`X-Guard-Csrf`), the token prefix
+  (`guard_pat_`), the app id and secret prefixes, the read scope (`api.read`), the second step's grant type
+  (`urn:abpguard:grant-type:second-factor`) and the Data Protection purposes' prefix (`AbpGuard`). Choose them before
+  your first release: changing one later breaks whatever already holds the old one. Refusals carry the error codes
+  `Guard:Forbidden` and `Guard:TooManyRequests`.
 - **Features:** `Features` switches whole features off, and their endpoints go with them. These are `Directories`,
   `PersonalTokens`, `OAuthApps`, `ClientRegistration`, `Merges`, `Handoff`, `SignUp`, `TwoFactor` and `DataExport`.
 - **Mail:** `Messenger:PickupFolder` gives the default messenger a folder to write mail to. For real delivery, replace
   `IGuardMessenger`.
-- **Texts:** `Texts` holds your product's name in Guard's messages (`Texts:ProductName`), or templates of your own.
+- **Texts:** `Texts` holds your product's name in Guard's messages (`Texts:ProductName:en`, and other languages), or
+  templates of your own. Give it: without one, the mails name "AbpGuard".
 - **First start:** `SignUp:Open` opens sign-up into the internal directory; it is closed by default, and an admin's
   later choice stays. `Seed` names what the first start makes: the admin's display name and email, the internal
   directory, and the admins and users groups with their descriptions. The admin's password is `Seed:AdminPassword`,
@@ -104,8 +107,8 @@ builder.Services.Configure<ForwardedHeadersOptions>(o =>
 app.UseForwardedHeaders();
 ```
 
-Comments in the code cite design records by number, such as "ADR 0087". These are Toda's architecture decision records.
-`docs/adr/0087-guard-as-a-package.md` is the one that made Guard a package.
+**A host that ran the earlier packages** keeps its sessions, tokens and protected data by setting the names it shipped
+with: see [docs/upgrading.md](docs/upgrading.md).
 
 ## Build and test
 
@@ -114,15 +117,15 @@ You need the .NET 10 SDK. The integration tests also need PostgreSQL: `localhost
 
 ```bash
 docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:17
-dotnet build Toda.Guard.slnx -c Release
-dotnet test Toda.Guard.slnx -c Release
-dotnet pack Toda.Guard.slnx -c Release -o artifacts
+dotnet build AbpGuard.slnx -c Release
+dotnet test AbpGuard.slnx -c Release
+dotnet pack AbpGuard.slnx -c Release -o artifacts
 ```
 
 ## Releasing
 
 The version is `VersionPrefix` and `VersionSuffix` in `Directory.Build.props`, and `CHANGELOG.md` needs an entry for
-it. Pushing the tag `v<version>`, such as `v0.1.0`, runs the checks. GitHub Actions then pushes the packages
+it. Pushing the tag `v<version>`, such as `v0.2.0`, runs the checks. GitHub Actions then pushes the packages
 to nuget.org and makes a GitHub release.
 
 Publishing uses nuget.org's Trusted Publishing, so no API key is stored anywhere: nuget.org gives the release job a key

@@ -7,11 +7,11 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
 
     <!-- One version for every package (see README.md, "Releasing", and CHANGELOG.md); a VersionSuffix makes a prerelease. -->
-    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionPrefix>0.2.0</VersionPrefix>
 
-    <Authors>Toda contributors</Authors>
+    <Authors>AbpGuard contributors</Authors>
     <Company>Tekthar</Company>
-    <Copyright>Copyright 2026 Toda contributors</Copyright>
+    <Copyright>Copyright 2026 AbpGuard contributors</Copyright>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/todahq/toda-guard</PackageProjectUrl>
     <RepositoryUrl>https://github.com/todahq/toda-guard.git</RepositoryUrl>

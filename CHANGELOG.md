@@ -1,10 +1,36 @@
 # Changelog
 
-All notable changes to Toda Guard are written here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+All notable changes to AbpGuard (Toda.Guard until 0.1.0) are written here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the packages follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): before 1.0, a minor version may
 change the API.
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-11-10
+
+Toda.Guard is now AbpGuard, a product of its own. Same code, tables and migrations, under new package ids and
+namespaces, with neutral defaults for every name it writes. A host that ran Toda.Guard keeps its sessions, tokens and
+protected data by setting the names it shipped with: see `docs/upgrading.md`.
+
+### Changed
+
+- **Packages and namespaces:** `Toda.Guard.Contracts`, `Toda.Guard.Acting` and `Toda.Guard` are `AbpGuard.Contracts`,
+  `AbpGuard.Acting` and `AbpGuard`; namespaces follow. `TodaGuardModule` is `AbpGuardModule`, the admin policy is
+  `GuardAdmin`, and the authentication schemes are `GuardBearer`, `GuardSession` and `GuardToken`.
+- **Neutral defaults for the names Guard writes** (each still set by `Guard:Names`, `Guard:Cookies` and the rest):
+  cookies `guard_session`, `guard_csrf`, `guard_embedded`; claims and app properties `guard_*`; the anti-forgery header
+  `X-Guard-Csrf`; token prefixes `guard_pat_`, `guard_app_`, `guard_cs_`; scopes `api` and `api.read`; clients `web` and
+  `mobile`; the second step's grant type `urn:abpguard:grant-type:second-factor`; the Data Protection purposes' prefix
+  `AbpGuard`; groups `admins` and `users`. **Breaking** for a host that relied on the defaults: set the old names.
+- **Error codes:** `Guard:Forbidden` and `Guard:TooManyRequests`. **Breaking** for clients that check the code.
+- **Texts:** Guard's own texts mark the product's name, which comes from `Guard:Texts:ProductName`, else "AbpGuard".
+  The seed's default names and the samples name no product.
+- The personal-data declaration's JSON schema id is `urn:abpguard:personal-data@1`.
+- Comments no longer cite design records by number.
+
+### Added
+
+- `scripts/check-names.sh`, run by CI on the sources and on the packages: the old product's name comes back nowhere.
 
 ## [0.1.0] - 2026-10-31
 

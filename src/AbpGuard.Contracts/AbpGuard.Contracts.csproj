@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Public contracts of AbpGuard: the directory connector SPI, lookups, and account and group events.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Abilities (IAbilities) for other modules. Nothing of ABP's or any product's: the contracts stand alone. -->
+    <PackageReference Include="Casl.Net" Version="0.1.0" />
+  </ItemGroup>
+
+</Project>
