@@ -18,6 +18,86 @@ public class ServiceAccountMaker(GuardDb guardDb, AccountProjector projector, Se
     public async Task<AccountInfo> CreateAsync(ServiceAccountInput input, CancellationToken cancellationToken = default) =>
         AccountLookup.ToInfo((await MakeAsync(input, cancellationToken)).Account);
 
+    public async Task<AccountInfo> RenameAsync(Guid accountId, string displayName, IReadOnlyDictionary<string, string>? displayNames,
+        CancellationToken cancellationToken = default)
+    {
+        string name = AccountCorrections.CheckNames(displayName, displayNames);
+        Account account = await guardDb.RunAsync(async db =>
+        {
+            Account account = await db.Accounts.FirstOrDefaultAsync(a => a.Id == accountId, cancellationToken)
+                ?? throw new Volo.Abp.Domain.Entities.EntityNotFoundException(typeof(Account), accountId);
+            if (!account.IsService || account.MergedIntoId is not null)
+            {
+                throw new UserFriendlyException("Only a service account is renamed here: people correct their own names.");
+            }
+
+            // Compared before anything is set, so a rename to the same names writes nothing and tells no one.
+            Dictionary<string, string> wanted = displayNames is null ? account.DisplayNames
+                : displayNames.Where(n => !string.IsNullOrWhiteSpace(n.Key) && !string.IsNullOrWhiteSpace(n.Value))
+                    .ToDictionary(n => n.Key.Trim(), n => n.Value.Trim(), StringComparer.Ordinal);
+            bool othersChanged = wanted.Count != account.DisplayNames.Count || wanted.Any(n => account.DisplayNames.GetValueOrDefault(n.Key) != n.Value);
+            string before = account.DisplayName;
+            if (before == name && !othersChanged)
+            {
+                return account;
+            }
+
+            if (othersChanged)
+            {
+                account.SetDisplayNames(wanted);
+            }
+
+            account.DisplayName = name;
+            // Its internal directory's record keeps the name too, so rebuilding the account from it keeps the new one.
+            if (account.DirectoryUserId is { } recordId && await db.DirectoryUsers.FirstOrDefaultAsync(u => u.Id == recordId, cancellationToken) is { } record)
+            {
+                record.DisplayName = name;
+                record.DisplayNames = new Dictionary<string, string>(account.DisplayNames);
+            }
+
+            audit.Add(db, SecurityAuditTypes.AccountRenamed, new AuditTarget("Account", account.Id, account.Username),
+                new { before, after = name, names = account.DisplayNames });
+            await db.SaveChangesAsync(cancellationToken);
+            // In the rename's unit of work, as an account's making is: the name, its audit entry and the event commit together.
+            await GuardEvents.PublishAsync(events, new AccountChangedEto(account.Id, account.Username, before, name, null, null), cancellationToken);
+            return account;
+        }, requiresNew: true, cancellationToken, isTransactional: true);
+        return AccountLookup.ToInfo(account);
+    }
+
+    public async Task<AccountInfo> SetPictureAsync(Guid accountId, string? picture, CancellationToken cancellationToken = default)
+    {
+        if (picture is not null && !AccountPictures.IsPath(picture))
+        {
+            throw new UserFriendlyException("A picture is a path on this site: \"/\", then letters, digits, \"/\", \".\", \"_\" and \"-\", at most 300 characters.");
+        }
+
+        Account account = await guardDb.RunAsync(async db =>
+        {
+            Account account = await db.Accounts.FirstOrDefaultAsync(a => a.Id == accountId, cancellationToken)
+                ?? throw new Volo.Abp.Domain.Entities.EntityNotFoundException(typeof(Account), accountId);
+            if (!account.IsService || account.MergedIntoId is not null)
+            {
+                throw new UserFriendlyException("Only a service account's picture is set here: people's come later.");
+            }
+
+            string? before = account.Picture;
+            if (before == picture)
+            {
+                return account;
+            }
+
+            account.Picture = picture;
+            audit.Add(db, SecurityAuditTypes.AccountPictureChanged, new AuditTarget("Account", account.Id, account.Username), new { before, after = picture });
+            await db.SaveChangesAsync(cancellationToken);
+            // In the change's unit of work, as a rename is: the picture, its audit entry and the event commit together. No
+            // name or address changed, so copies of them have nothing to do.
+            await GuardEvents.PublishAsync(events, new AccountChangedEto(account.Id, account.Username, null, null, null, null), cancellationToken);
+            return account;
+        }, requiresNew: true, cancellationToken, isTransactional: true);
+        return AccountLookup.ToInfo(account);
+    }
+
     public async Task<NewServiceAccountToken> CreateTokenAsync(ServiceAccountTokenInput input, CancellationToken cancellationToken = default)
     {
         await TokenHolderAsync(input.AccountId, mustBeActive: true, cancellationToken);
@@ -70,6 +150,18 @@ public class ServiceAccountMaker(GuardDb guardDb, AccountProjector projector, Se
             throw new UserFriendlyException(Usernames.Rule);
         }
 
+        Usernames.EnsureNotReserved(username, input.DisplayName);
+        if (input.DisplayNames is { Count: > 0 })
+        {
+            // Names in other languages, as a person's: the name as written (English) is required beside them.
+            if (string.IsNullOrWhiteSpace(input.DisplayName))
+            {
+                throw new UserFriendlyException("Give the name as written (in English) as well as the other languages'.");
+            }
+
+            AccountCorrections.CheckNames(input.DisplayName, input.DisplayNames);
+        }
+
         string normalized = GuardConstants.Normalize(username);
         return await guardDb.RunAsync(async db =>
         {
@@ -89,6 +181,10 @@ public class ServiceAccountMaker(GuardDb guardDb, AccountProjector projector, Se
             await db.SaveChangesAsync(cancellationToken);
             Account account = await db.Accounts.FirstAsync(a => a.NormalizedUsername == normalized, cancellationToken);
             account.MakeService(input.Agent);
+            if (input.DisplayNames is { Count: > 0 } names)
+            {
+                account.SetDisplayNames(names);
+            }
             string directory = await db.Directories.Where(d => d.Id == account.DirectoryId).Select(d => d.Name).FirstAsync(cancellationToken);
             audit.Add(db, SecurityAuditTypes.AccountCreated, new AuditTarget("Account", account.Id, account.Username),
                 input.Agent ? new { directory, service = true, agent = true } : new { directory, service = true });

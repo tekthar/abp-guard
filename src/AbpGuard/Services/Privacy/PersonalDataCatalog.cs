@@ -35,7 +35,19 @@ public sealed record PrivacyContactDto(string? Name, string? Contact);
 
 /// <summary>The site's controller and data protection officer, and who receives each destination's data.</summary>
 public sealed record PrivacySettingsDto(PrivacyContactDto Controller, PrivacyContactDto Officer, string? Country,
-    IReadOnlyDictionary<string, PrivacyDestination> Destinations, DateTime? UpdatedAt, PrivacyPersonDto? UpdatedBy);
+    IReadOnlyDictionary<string, PrivacyDestination> Destinations, DateTime? UpdatedAt, PrivacyPersonDto? UpdatedBy)
+{
+    /// <summary>The privacy notice's version now, and when it was published; null when none is.</summary>
+    public int? NoticeVersion { get; init; }
+
+    public DateTime? NoticePublishedAt { get; init; }
+
+    /// <summary>Whether apps may register themselves: each is somewhere data can go once a person allows it.</summary>
+    public bool AppsMayRegister { get; init; }
+
+    /// <summary>The host the security log's feed goes to while it's on: a recipient of usernames and addresses.</summary>
+    public string? SecurityFeedHost { get; init; }
+}
 
 /// <summary>
 /// A site's data map: every store of its modules and plugins with what's recorded, every plugin with
@@ -87,7 +99,15 @@ public sealed class PersonalDataCatalog(IEnumerable<IPersonalDataDeclarations> m
             }
 
             HashSet<string> keys = [.. stores.Select(s => s.Key)];
-            return new PrivacyMapDto(stores, installed, Settings(settings, names),
+            var notice = await db.PrivacyNotices.AsNoTracking().OrderByDescending(n => n.Number).Select(n => new { n.Number, n.PublishedAt })
+                .FirstOrDefaultAsync(cancellationToken);
+            bool appsRegister = await db.SecuritySettings.AsNoTracking().Select(s => s.AppsMayRegister).FirstOrDefaultAsync(cancellationToken);
+            string? feed = await db.SecurityFeeds.AsNoTracking().Where(f => f.Enabled).Select(f => f.Url).FirstOrDefaultAsync(cancellationToken);
+            return new PrivacyMapDto(stores, installed, Settings(settings, names) with
+                {
+                    NoticeVersion = notice?.Number, NoticePublishedAt = notice?.PublishedAt, AppsMayRegister = appsRegister,
+                    SecurityFeedHost = Uri.TryCreate(feed, UriKind.Absolute, out Uri? to) ? to.Host : null,
+                },
                 [.. records.Values.Where(r => !keys.Contains(r.StoreKey)).OrderBy(r => r.StoreKey, StringComparer.Ordinal).Select(Recorded)],
                 PersonalDataKinds.All, PersonalDataDestinations.All, LegalBases.All);
         }, cancellationToken: cancellationToken);

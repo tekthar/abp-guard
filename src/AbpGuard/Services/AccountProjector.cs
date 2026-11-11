@@ -48,10 +48,23 @@ public class AccountProjector(Microsoft.Extensions.Options.IOptions<GuardOptions
                 continue;
             }
 
+            if (account.ErasedAt is not null)
+            {
+                continue; // a pseudonym a directory happens to use: the erased account stays erased
+            }
+
             AccountStatus before = account.Status;
             Guid directoryBefore = account.DirectoryId;
+            string nameBefore = account.DisplayName;
+            Dictionary<string, string> namesBefore = new(account.DisplayNames);
             Apply(account, winner, directory, Product);
             AddStatusEvents(events, account, before);
+            // A name the directory changed, in any language, reaches the copies others keep.
+            if (nameBefore != account.DisplayName || namesBefore.Count != account.DisplayNames.Count
+                || namesBefore.Any(n => account.DisplayNames.GetValueOrDefault(n.Key) != n.Value))
+            {
+                events.Add(new AccountChangedEto(account.Id, account.Username, nameBefore, account.DisplayName, null, null));
+            }
             if (directoryBefore != account.DirectoryId)
             {
                 events.Add(new AccountUpdatedEto(account.Id, account.Username, account.DirectoryId));
@@ -62,9 +75,9 @@ public class AccountProjector(Microsoft.Extensions.Options.IOptions<GuardOptions
         {
             AccountStatus before = orphan.Status;
             orphan.DirectoryUserId = null;
-            if (orphan.MergedIntoId is not null)
+            if (orphan.MergedIntoId is not null || orphan.ErasedAt is not null)
             {
-                orphan.Status = AccountStatus.Inactive; // merged: its reason names the survivor
+                orphan.Status = AccountStatus.Inactive; // merged, its reason naming the survivor, or erased
                 continue;
             }
 
@@ -93,6 +106,10 @@ public class AccountProjector(Microsoft.Extensions.Options.IOptions<GuardOptions
     {
         account.Username = winner.Username;
         account.DisplayName = string.IsNullOrWhiteSpace(winner.DisplayName) ? winner.Username : winner.DisplayName!;
+        if (winner.DisplayNames is not null)
+        {
+            account.SetDisplayNames(winner.DisplayNames);
+        }
         account.Email = winner.Email;
         account.DirectoryId = directory.Id;
         account.DirectoryUserId = winner.Id;

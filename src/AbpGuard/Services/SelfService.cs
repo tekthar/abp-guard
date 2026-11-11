@@ -22,7 +22,7 @@ public sealed record SignUpSettingsInput([property: JsonRequired] bool Enabled, 
 public sealed record SignUpInfoDto(bool Enabled, List<string> EmailDomains);
 
 /// <summary>A sign-up: the email, a name and a password, and the answer to the site's CAPTCHA (M10 step 7).</summary>
-public sealed record SignUpInput(string Email, string DisplayName, string Password, string? Captcha = null);
+public sealed record SignUpInput(string Email, string DisplayName, string Password, string? Captcha = null, int? NoticeVersion = null);
 
 public sealed record TokenInput(string Token);
 
@@ -176,6 +176,8 @@ public class SelfService(GuardDb guardDb, AccountProjector projector, IDataProte
         {
             throw new UserFriendlyException("A name is at most 200 characters.");
         }
+
+        Usernames.EnsureNotReserved(email, name);
 
         string normalized = GuardConstants.Normalize(email);
         DirectoryUser user = await guardDb.RunAsync(async db =>

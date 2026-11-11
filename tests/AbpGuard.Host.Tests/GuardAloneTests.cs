@@ -230,6 +230,42 @@ public sealed partial class GuardAloneTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_token_under_former_names_is_read_by_todays_before_its_claims_are_and_a_stray_one_is_refused()
+    {
+        // Wired into the host's validation, after OpenIddict has validated the access token and before the ticket is built
+        // that the current user and the limits are read from (GuardNames.Former).
+        OpenIddict.Validation.OpenIddictValidationOptions validation = _factory!.Services
+            .GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<OpenIddict.Validation.OpenIddictValidationOptions>>().CurrentValue;
+        OpenIddict.Validation.OpenIddictValidationHandlerDescriptor wired = Assert.Single(validation.Handlers,
+            h => h.ServiceDescriptor.ServiceType == typeof(Services.TokenNamesOfToday));
+        Assert.True(wired.Order > OpenIddict.Validation.OpenIddictValidationHandlers.ValidateAccessToken.Descriptor.Order);
+
+        Guid project = Guid.NewGuid();
+        OpenIddict.Validation.OpenIddictValidationEvents.ProcessAuthenticationContext Context(params (string Type, string Value)[] claims) =>
+            new(new OpenIddict.Validation.OpenIddictValidationTransaction { Options = validation, Logger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance })
+            {
+                AccessTokenPrincipal = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+                    claims.Select(c => new System.Security.Claims.Claim(c.Type, c.Value)), "Bearer")),
+            };
+
+        // The host's own handler, as the host resolves it: a site with no former names refuses a stray limit claim.
+        using IServiceScope scope = _factory.Services.CreateScope();
+        Services.TokenNamesOfToday hosts = scope.ServiceProvider.GetRequiredService<Services.TokenNamesOfToday>();
+        var stray = Context(("sub", Guid.NewGuid().ToString()), ("old_token", Guid.NewGuid().ToString()), ("old_token_project", project.ToString()));
+        await hosts.HandleAsync(stray);
+        Assert.True(stray.IsRejected);
+        Assert.Equal(OpenIddict.Abstractions.OpenIddictConstants.Errors.InvalidToken, stray.Error);
+
+        // A site that names its former names: the old token reads with today's, its project limit kept.
+        GuardNames renamed = new() { Former = new FormerTokenNames { TokenClaim = "old_token", TokenProjectClaim = "old_token_project" } };
+        var old = Context(("sub", Guid.NewGuid().ToString()), ("old_token", Guid.NewGuid().ToString()), ("old_token_project", project.ToString()));
+        await new Services.TokenNamesOfToday(Microsoft.Extensions.Options.Options.Create(renamed)).HandleAsync(old);
+        Assert.False(old.IsRejected);
+        Assert.Equal(project.ToString(), old.AccessTokenPrincipal!.FindFirst(renamed.TokenProjectClaim)?.Value);
+        Assert.Null(old.AccessTokenPrincipal.FindFirst("old_token_project"));
+    }
+
+    [Fact]
     public async Task The_names_Guard_writes_are_the_hosts()
     {
         // A host names its anti-forgery header and its tokens' prefix (Guard:Names): Guard asks for and recognises those.
@@ -316,6 +352,93 @@ public sealed partial class GuardAloneTests : IAsyncLifetime
             "SELECT (SELECT count(*) FROM guard.accounts WHERE \"Username\" = 'robot') + (SELECT count(*) FROM guard.security_events WHERE \"Type\" = 'account.created' AND \"TargetName\" = 'robot')"
             + " + (SELECT count(*) FROM guard.\"AbpEventOutbox\" WHERE \"EventName\" LIKE '%AccountCreated%')", connection);
         Assert.Equal(3L, (long)(await count.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task The_host_names_a_service_account_by_language_and_renames_it_but_never_a_person()
+    {
+        _ = Client();
+        using IServiceScope scope = _factory!.Services.CreateScope();
+        IServiceAccounts accounts = scope.ServiceProvider.GetRequiredService<IServiceAccounts>();
+        IAccountLookup lookup = scope.ServiceProvider.GetRequiredService<IAccountLookup>();
+
+        // Made with its names: the name as written (English) and the others by language, as a person's.
+        AccountInfo made = await accounts.CreateAsync(new ServiceAccountInput("triage")
+        {
+            DisplayName = "Triage", Agent = true, DisplayNames = new Dictionary<string, string> { ["ar"] = "الفرز" },
+        });
+        Assert.Equal(("Triage", "الفرز"), (made.DisplayName, made.DisplayNames!["ar"]));
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => accounts.CreateAsync(new ServiceAccountInput("nameless")
+        {
+            DisplayNames = new Dictionary<string, string> { ["ar"] = "بلا اسم" },
+        }));
+
+        // Renamed: both names follow, audited and told once.
+        AccountInfo renamed = await accounts.RenameAsync(made.Id, "Desk triage", new Dictionary<string, string> { ["ar"] = "فرز المكتب" });
+        Assert.Equal(("Desk triage", "فرز المكتب"), (renamed.DisplayName, renamed.DisplayNames!["ar"]));
+        AccountInfo stored = (await lookup.GetAsync(made.Id))!;
+        Assert.Equal(("Desk triage", "فرز المكتب"), (stored.DisplayName, stored.DisplayNames!["ar"]));
+
+        // The same names again change nothing: no second audit entry, no second event.
+        await accounts.RenameAsync(made.Id, "Desk triage", new Dictionary<string, string> { ["ar"] = "فرز المكتب" });
+        await using NpgsqlConnection connection = new($"{Server};Database={_database}");
+        await connection.OpenAsync();
+        await using NpgsqlCommand count = new(
+            "SELECT (SELECT count(*) FROM guard.security_events WHERE \"Type\" = 'account.renamed' AND \"TargetName\" = 'triage')"
+            + " + (SELECT count(*) FROM guard.\"AbpEventOutbox\" WHERE \"EventName\" LIKE '%AccountChanged%')", connection);
+        Assert.Equal(2L, (long)(await count.ExecuteScalarAsync())!);
+
+        // Never a person's account, and never a reserved name.
+        AccountInfo admin = (await lookup.FindByUsernameAsync("admin"))!;
+        Volo.Abp.UserFriendlyException person = await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => accounts.RenameAsync(admin.Id, "Someone else", null));
+        Assert.Contains("Only a service account", person.Message);
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => accounts.RenameAsync(made.Id, "Former person 12", null));
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() =>
+            accounts.RenameAsync(made.Id, "Desk triage", new Dictionary<string, string> { ["ar"] = "Former person 12" }));
+    }
+
+    [Fact]
+    public async Task The_host_gives_a_service_account_a_picture_on_the_site_but_never_a_person()
+    {
+        _ = Client();
+        using IServiceScope scope = _factory!.Services.CreateScope();
+        IServiceAccounts accounts = scope.ServiceProvider.GetRequiredService<IServiceAccounts>();
+        IAccountLookup lookup = scope.ServiceProvider.GetRequiredService<IAccountLookup>();
+        AccountInfo made = await accounts.CreateAsync(new ServiceAccountInput("designer") { DisplayName = "Designer", Agent = true });
+        Assert.Null(made.Picture);
+
+        // Set, and read back wherever the account is looked up.
+        AccountInfo set = await accounts.SetPictureAsync(made.Id, "/api/pictures/builtin-owl.png");
+        Assert.Equal("/api/pictures/builtin-owl.png", set.Picture);
+        Assert.Equal("/api/pictures/builtin-owl.png", (await lookup.GetAsync(made.Id))!.Picture);
+
+        // The same again changes nothing: one audit entry and one event, then cleared: a second of each.
+        await accounts.SetPictureAsync(made.Id, "/api/pictures/builtin-owl.png");
+        await using NpgsqlConnection connection = new($"{Server};Database={_database}");
+        await connection.OpenAsync();
+        async Task<long> CountAsync()
+        {
+            await using NpgsqlCommand count = new(
+                "SELECT (SELECT count(*) FROM guard.security_events WHERE \"Type\" = 'account.picture' AND \"TargetName\" = 'designer')"
+                + " + (SELECT count(*) FROM guard.\"AbpEventOutbox\" WHERE \"EventName\" LIKE '%AccountChanged%')", connection);
+            return (long)(await count.ExecuteScalarAsync())!;
+        }
+
+        Assert.Equal(2L, await CountAsync());
+        Assert.Null((await accounts.SetPictureAsync(made.Id, null)).Picture);
+        Assert.Null((await lookup.GetAsync(made.Id))!.Picture);
+        Assert.Equal(4L, await CountAsync());
+
+        // Never an address elsewhere, and never a person's account.
+        foreach (string elsewhere in new[] { "//host/x.png", "/\\host/x.png", "https://host/x.png", "javascript:alert(1)", "data:image/png;base64,AAAA", "/api/../x.png" })
+        {
+            await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => accounts.SetPictureAsync(made.Id, elsewhere));
+        }
+
+        AccountInfo admin = (await lookup.FindByUsernameAsync("admin"))!;
+        Volo.Abp.UserFriendlyException person = await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => accounts.SetPictureAsync(admin.Id, "/api/pictures/builtin-owl.png"));
+        Assert.Contains("Only a service account", person.Message);
+        Assert.Null((await lookup.GetAsync(admin.Id))!.Picture);
     }
 
     [Fact]
@@ -547,7 +670,454 @@ public sealed partial class GuardAloneTests : IAsyncLifetime
         return body.RootElement.GetProperty("id").GetGuid();
     }
 
-    private static async Task AssertErrorAsync(HttpResponseMessage response, HttpStatusCode status, string code)
+    [Fact]
+    public async Task A_person_corrects_their_name_and_primary_address_and_the_old_one_hears_of_it()
+    {
+        HttpClient admin = Client();
+        string csrf = await SignInAsync(admin, "admin", AdminPassword);
+        string id;
+        using (JsonDocument me = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/me")))
+        {
+            id = me.RootElement.GetProperty("account").GetProperty("id").GetString()!;
+        }
+
+        async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, object? body = null)
+        {
+            using HttpRequestMessage request = new(method, path) { Content = body is null ? null : JsonContent.Create(body) };
+            request.Headers.Add(CsrfHeader, csrf);
+            return await admin.SendAsync(request);
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Put, "/api/guard/me/name", new { displayName = "Ada Admin" })).StatusCode);
+        await AssertErrorAsync(await SendAsync(HttpMethod.Put, "/api/guard/me/name", new { displayName = " " }), HttpStatusCode.BadRequest, null);
+        using (JsonDocument me = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/me")))
+        {
+            Assert.Equal("Ada Admin", me.RootElement.GetProperty("account").GetProperty("displayName").GetString());
+        }
+
+        // An admin's address is confirmed at once; the person makes it their primary, and the one before stays theirs.
+        HttpResponseMessage added = await SendAsync(HttpMethod.Post, $"/api/guard/accounts/{id}/emails", new { email = "ada@home.example" });
+        Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+        string? before;
+        string emailId;
+        using (JsonDocument addresses = JsonDocument.Parse(await added.Content.ReadAsStringAsync()))
+        {
+            Assert.True(addresses.RootElement.GetProperty("correctable").GetBoolean());
+            before = addresses.RootElement.GetProperty("directoryEmail").GetString();
+            emailId = addresses.RootElement.GetProperty("addresses").EnumerateArray()
+                .First(a => a.GetProperty("email").GetString() == "ada@home.example").GetProperty("id").GetString()!;
+        }
+
+        HttpResponseMessage primary = await SendAsync(HttpMethod.Post, $"/api/guard/me/emails/{emailId}/primary");
+        Assert.Equal(HttpStatusCode.OK, primary.StatusCode);
+        using (JsonDocument now = JsonDocument.Parse(await primary.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal("ada@home.example", now.RootElement.GetProperty("directoryEmail").GetString());
+            if (before is not null)
+            {
+                Assert.Contains(now.RootElement.GetProperty("addresses").EnumerateArray(),
+                    a => a.GetProperty("email").GetString() == before && a.GetProperty("source").GetString() == "former-primary");
+                Assert.Contains(Directory.GetFiles(_mail, "*.eml").Select(File.ReadAllText), m => m.Contains(before, StringComparison.OrdinalIgnoreCase)
+                    && m.Contains("now uses ada@home.example", StringComparison.Ordinal));
+            }
+        }
+
+        // Sign-in still takes the username, and the security log has both corrections.
+        await SignInAsync(Client(), "admin", AdminPassword);
+        await using NpgsqlConnection connection = new($"{Server};Database={_database}");
+        await connection.OpenAsync();
+        await using NpgsqlCommand audit = new(
+            "SELECT string_agg(\"Type\", ',' ORDER BY \"Time\") FROM guard.security_events WHERE \"Type\" IN ('account.renamed', 'account.address.primary')", connection);
+        Assert.Equal("account.renamed,account.address.primary", await audit.ExecuteScalarAsync());
+    }
+
+    [Fact]
+    public async Task A_person_asks_to_be_erased_a_hold_stops_it_and_once_released_they_become_a_pseudonym()
+    {
+        HttpClient admin = Client();
+        string csrf = await SignInAsync(admin, "admin", AdminPassword);
+
+        async Task<HttpResponseMessage> SendAsync(HttpClient client, string token, HttpMethod method, string path, object? body = null)
+        {
+            using HttpRequestMessage request = new(method, path) { Content = body is null ? null : JsonContent.Create(body) };
+            request.Headers.Add(CsrfHeader, token);
+            return await client.SendAsync(request);
+        }
+
+        // An erased account's username is kept for it, so no one takes "former-person-1" before the erasure needs it.
+        await AssertErrorAsync(await SendAsync(admin, csrf, HttpMethod.Post, "/api/guard/accounts",
+            new { username = "former-person-1", displayName = "Squatter", password = "Squat-Pass-12345" }), HttpStatusCode.BadRequest, "reserved_name");
+
+        HttpResponseMessage created = await SendAsync(admin, csrf, HttpMethod.Post, "/api/guard/accounts",
+            new { username = "erin", displayName = "Erin Example", email = "erin@example.test", password = "Erin-Pass-12345" });
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        string id;
+        using (JsonDocument account = JsonDocument.Parse(await created.Content.ReadAsStringAsync()))
+        {
+            id = account.RootElement.GetProperty("id").GetString()!;
+        }
+
+        // Erin asks, from the You page.
+        HttpClient erin = Client();
+        string erinCsrf = await SignInAsync(erin, "erin", "Erin-Pass-12345");
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(erin, erinCsrf, HttpMethod.Post, "/api/guard/me/erasure-request", new { reason = "I've left." })).StatusCode);
+        using (JsonDocument mine = JsonDocument.Parse(await erin.GetStringAsync("/api/guard/me/erasure-request")))
+        {
+            Assert.Equal("requested", mine.RootElement.GetProperty("state").GetString());
+        }
+
+        // A legal hold stops the erasure, with its own code, until it's released.
+        HttpResponseMessage held = await SendAsync(admin, csrf, HttpMethod.Post, "/api/guard/privacy/holds", new { accountId = id, reason = "A case about invoices" });
+        Assert.Equal(HttpStatusCode.OK, held.StatusCode);
+        string holdId;
+        using (JsonDocument hold = JsonDocument.Parse(await held.Content.ReadAsStringAsync()))
+        {
+            holdId = hold.RootElement.GetProperty("id").GetString()!;
+            Assert.True(hold.RootElement.GetProperty("active").GetBoolean());
+        }
+
+        using (JsonDocument preview = JsonDocument.Parse(await admin.GetStringAsync($"/api/guard/accounts/{id}/erasure/preview")))
+        {
+            Assert.Single(preview.RootElement.GetProperty("holds").EnumerateArray());
+            Assert.Contains(preview.RootElement.GetProperty("stores").EnumerateArray(), s => s.GetString() == "guard.accounts");
+        }
+
+        await AssertErrorAsync(await SendAsync(admin, csrf, HttpMethod.Post, $"/api/guard/accounts/{id}/erasure"), HttpStatusCode.BadRequest, "legal_hold");
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(admin, csrf, HttpMethod.Post, $"/api/guard/privacy/holds/{holdId}/release")).StatusCode);
+
+        HttpResponseMessage erased = await SendAsync(admin, csrf, HttpMethod.Post, $"/api/guard/accounts/{id}/erasure");
+        Assert.Equal(HttpStatusCode.OK, erased.StatusCode);
+        int number;
+        using (JsonDocument erasure = JsonDocument.Parse(await erased.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal("done", erasure.RootElement.GetProperty("state").GetString());
+            number = erasure.RootElement.GetProperty("number").GetInt32();
+            Assert.Equal($"Former person {number}", erasure.RootElement.GetProperty("pseudonym").GetString());
+            Assert.All(erasure.RootElement.GetProperty("stores").EnumerateObject().Where(s => s.Name.StartsWith("guard.", StringComparison.Ordinal)),
+                s => Assert.Equal("done", s.Value.GetString()));
+        }
+
+        // Her sessions ended.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await erin.GetAsync("/api/guard/me")).StatusCode);
+
+        await using NpgsqlConnection connection = new($"{Server};Database={_database}");
+        await connection.OpenAsync();
+        async Task<object?> ScalarAsync(string sql)
+        {
+            await using NpgsqlCommand command = new(sql, connection);
+            command.Parameters.AddWithValue("id", Guid.Parse(id));
+            return await command.ExecuteScalarAsync();
+        }
+
+        Assert.Equal($"former-person-{number}|Former person {number}||true",
+            await ScalarAsync("SELECT \"Username\" || '|' || \"DisplayName\" || '|' || coalesce(\"Email\", '') || '|' || (\"ErasedAt\" IS NOT NULL) FROM guard.accounts WHERE \"Id\" = @id"));
+        Assert.Equal(0L, await ScalarAsync("SELECT count(*) FROM guard.sessions WHERE \"AccountId\" = @id"));
+        Assert.Equal(0L, await ScalarAsync("SELECT count(*) FROM guard.directory_users WHERE \"NormalizedUsername\" = 'erin'"));
+        Assert.Equal(0L, await ScalarAsync("SELECT count(*) FROM guard.security_events WHERE \"Username\" ILIKE '%erin%' OR \"TargetName\" ILIKE '%erin%' OR \"Detail\" ILIKE '%erin%'"));
+        Assert.True((long)(await ScalarAsync("SELECT count(*) FROM guard.security_events WHERE \"TargetId\" = @id OR \"AccountId\" = @id"))! > 0);
+        Assert.Equal(true, await ScalarAsync("SELECT bool_and(\"Subject\" IS NULL) FROM guard.erasures WHERE \"AccountId\" = @id"));
+        Assert.Equal(DBNull.Value, await ScalarAsync("SELECT \"Address\" FROM guard.legal_holds WHERE \"AccountId\" = @id"));
+
+        // Her username finds nothing now (the log notes the try, as it would anyone's).
+        HttpResponseMessage signIn = await Client().PostAsJsonAsync("/api/guard/session", new { username = "erin", password = "Erin-Pass-12345" });
+        Assert.NotEqual(HttpStatusCode.OK, signIn.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_new_site_keeps_by_the_default_periods_and_a_sweep_removes_a_sign_up_never_confirmed()
+    {
+        HttpClient admin = Client();
+        string csrf = await SignInAsync(admin, "admin", AdminPassword);
+
+        async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, object? body = null)
+        {
+            using HttpRequestMessage request = new(method, path) { Content = body is null ? null : JsonContent.Create(body) };
+            request.Headers.Add(CsrfHeader, csrf);
+            return await admin.SendAsync(request);
+        }
+
+        // A new site starts confirmed, with Guard's two rules at their defaults.
+        using (JsonDocument retention = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/privacy/retention")))
+        {
+            Assert.True(retention.RootElement.GetProperty("confirmedByDefault").GetBoolean());
+            JsonElement signUps = retention.RootElement.GetProperty("rules").EnumerateArray().Single(r => r.GetProperty("key").GetString() == "guard.unconfirmed-sign-ups");
+            Assert.Equal(7, signUps.GetProperty("days").GetInt32());
+        }
+
+        await AssertErrorAsync(await SendAsync(HttpMethod.Put, "/api/guard/privacy/retention", new { days = new Dictionary<string, int?> { ["guard.unconfirmed-sign-ups"] = 0 }, confirm = true }),
+            HttpStatusCode.BadRequest, null);
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Put, "/api/guard/privacy/retention",
+            new { days = new Dictionary<string, int?> { ["guard.unconfirmed-sign-ups"] = 3 }, confirm = true })).StatusCode);
+
+        // Someone signs up and never confirms; four days later a sweep removes their record and account.
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Put, "/api/guard/signup/settings",
+            new { enabled = true, directoryId = "00000000-0000-0000-0000-00000000d001", emailDomains = Array.Empty<string>() })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await Client().PostAsJsonAsync("/api/guard/signup",
+            new { email = "nadia@example.test", displayName = "Nadia", password = "Nadia-Pass-12345" })).StatusCode);
+        await using NpgsqlConnection connection = new($"{Server};Database={_database}");
+        await connection.OpenAsync();
+        await using (NpgsqlCommand age = new("UPDATE guard.directory_users SET \"PendingSince\" = now() - interval '4 days' WHERE \"NormalizedUsername\" = 'NADIA@EXAMPLE.TEST' OR lower(\"Username\") = 'nadia@example.test'", connection))
+        {
+            Assert.Equal(1, await age.ExecuteNonQueryAsync());
+        }
+
+        HttpResponseMessage swept = await SendAsync(HttpMethod.Post, "/api/guard/privacy/retention/sweep");
+        Assert.Equal(HttpStatusCode.OK, swept.StatusCode);
+        using (JsonDocument counts = JsonDocument.Parse(await swept.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal(1, counts.RootElement.GetProperty("guard.unconfirmed-sign-ups").GetInt32());
+        }
+
+        await using NpgsqlCommand left = new("SELECT count(*) FROM guard.directory_users WHERE lower(\"Username\") = 'nadia@example.test'", connection);
+        Assert.Equal(0L, await left.ExecuteScalarAsync());
+        await using NpgsqlCommand accounts = new("SELECT count(*) FROM guard.accounts WHERE lower(\"Username\") = 'nadia@example.test'", connection);
+        Assert.Equal(0L, await accounts.ExecuteScalarAsync());
+        await using NpgsqlCommand logged = new("SELECT count(*) FROM guard.security_events WHERE \"Type\" = 'privacy.retention.swept'", connection);
+        Assert.Equal(1L, await logged.ExecuteScalarAsync());
+
+        // An import's placeholder with the username a sign-up then takes and never confirms: the sweep removes the sign-up,
+        // and the placeholder keeps its account, which the import's records name.
+        Guid placeholder;
+        using (IServiceScope scope = _factory!.Services.CreateScope())
+        {
+            placeholder = (await scope.ServiceProvider.GetRequiredService<IAccountProvisioning>()
+                .MatchOrCreatePlaceholderAsync("Tracker", "pia@example.test", "Pia", "pia@example.test")).AccountId;
+        }
+
+        Assert.Equal(HttpStatusCode.NoContent, (await Client().PostAsJsonAsync("/api/guard/signup",
+            new { email = "pia@example.test", displayName = "Pia", password = "Pia-Pass-123456" })).StatusCode);
+        await using (NpgsqlCommand age = new("UPDATE guard.directory_users SET \"PendingSince\" = now() - interval '4 days' WHERE \"PendingSince\" IS NOT NULL", connection))
+        {
+            Assert.Equal(1, await age.ExecuteNonQueryAsync());
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Post, "/api/guard/privacy/retention/sweep")).StatusCode);
+        await using NpgsqlCommand kept = new("SELECT count(*) FROM guard.accounts a JOIN guard.directory_users u ON u.\"Id\" = a.\"DirectoryUserId\" WHERE a.\"Id\" = @id AND u.\"PendingSince\" IS NULL", connection);
+        kept.Parameters.AddWithValue("id", placeholder);
+        Assert.Equal(1L, await kept.ExecuteScalarAsync());
+    }
+
+    [Fact]
+    public async Task A_published_notice_is_accepted_on_sign_up_asked_again_when_it_changes_and_consent_is_withdrawn()
+    {
+        HttpClient admin = Client();
+        string csrf = await SignInAsync(admin, "admin", AdminPassword);
+
+        async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, object? body = null)
+        {
+            using HttpRequestMessage request = new(method, path) { Content = body is null ? null : JsonContent.Create(body) };
+            request.Headers.Add(CsrfHeader, csrf);
+            return await admin.SendAsync(request);
+        }
+
+        // No notice yet: nothing to read or accept.
+        Assert.Equal(HttpStatusCode.NoContent, (await Client().GetAsync("/api/guard/privacy-notice")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Post, "/api/guard/privacy/notices",
+            new { texts = new Dictionary<string, object> { ["en"] = new { markdown = "# How we use your data" }, ["ar"] = new { link = "https://example.test/privacy-ar" } } })).StatusCode);
+        using (JsonDocument notice = JsonDocument.Parse(await Client().GetStringAsync("/api/guard/privacy-notice?language=ar")))
+        {
+            Assert.Equal(1, notice.RootElement.GetProperty("version").GetInt32());
+            Assert.Equal("https://example.test/privacy-ar", notice.RootElement.GetProperty("link").GetString());
+        }
+
+        // Sign-up shows it and must carry the version it showed.
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Put, "/api/guard/signup/settings",
+            new { enabled = true, directoryId = "00000000-0000-0000-0000-00000000d001", emailDomains = Array.Empty<string>() })).StatusCode);
+        await AssertErrorAsync(await Client().PostAsJsonAsync("/api/guard/signup", new { email = "lina@example.test", displayName = "Lina", password = "Lina-Pass-123456" }),
+            HttpStatusCode.BadRequest, "accept_notice");
+        Assert.Equal(HttpStatusCode.NoContent, (await Client().PostAsJsonAsync("/api/guard/signup",
+            new { email = "lina@example.test", displayName = "Lina", password = "Lina-Pass-123456", noticeVersion = 1 })).StatusCode);
+
+        // The admin, signed in, never accepted it; a new version asks again.
+        using (JsonDocument mine = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/me/privacy")))
+        {
+            Assert.True(mine.RootElement.GetProperty("needsAcceptance").GetBoolean());
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Post, "/api/guard/me/privacy/accept", new { version = 1 })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Post, "/api/guard/privacy/notices",
+            new { texts = new Dictionary<string, object> { ["en"] = new { markdown = "# How we use your data, now" } } })).StatusCode);
+        using (JsonDocument mine = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/me/privacy")))
+        {
+            Assert.True(mine.RootElement.GetProperty("needsAcceptance").GetBoolean());
+            Assert.Equal(1, mine.RootElement.GetProperty("acceptedVersion").GetInt32());
+        }
+
+        await AssertErrorAsync(await SendAsync(HttpMethod.Post, "/api/guard/me/privacy/accept", new { version = 1 }), HttpStatusCode.BadRequest, "accept_notice");
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Post, "/api/guard/me/privacy/accept", new { version = 2 })).StatusCode);
+
+        // Where a store's basis is consent, a person withdraws theirs and an admin marks it handled.
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Put, "/api/guard/privacy/stores/guard.sessions", new { legalBasis = "consent" })).StatusCode);
+        HttpResponseMessage withdrawn = await SendAsync(HttpMethod.Post, "/api/guard/me/privacy/withdraw", new { store = "guard.sessions" });
+        Assert.Equal(HttpStatusCode.OK, withdrawn.StatusCode);
+        await AssertErrorAsync(await SendAsync(HttpMethod.Post, "/api/guard/me/privacy/withdraw", new { store = "guard.accounts" }), HttpStatusCode.BadRequest, null);
+        string withdrawalId;
+        using (JsonDocument list = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/privacy/consent-withdrawals")))
+        {
+            JsonElement first = Assert.Single(list.RootElement.EnumerateArray());
+            Assert.Equal("guard.sessions", first.GetProperty("store").GetString());
+            withdrawalId = first.GetProperty("id").GetString()!;
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Post, $"/api/guard/privacy/consent-withdrawals/{withdrawalId}/handled", new { note = "Signed out everywhere" })).StatusCode);
+        string record = await admin.GetStringAsync("/api/guard/privacy/record?language=en");
+        Assert.Contains("Version 2", record, StringComparison.Ordinal);
+
+        await using NpgsqlConnection connection = new($"{Server};Database={_database}");
+        await connection.OpenAsync();
+        await using NpgsqlCommand accepted = new("SELECT string_agg(\"Where\" || ':' || \"Version\", ',' ORDER BY \"At\") FROM guard.privacy_acceptances", connection);
+        Assert.Equal("sign-up:1,sign-in:1,sign-in:2", await accepted.ExecuteScalarAsync());
+    }
+
+    [Fact]
+    public async Task Apps_may_not_register_themselves_on_a_new_site_until_an_admin_lets_them()
+    {
+        // The sample host has no registration endpoint at all (GuardFeatures.ClientRegistration off); a new site's setting is off too.
+        HttpClient admin = Client();
+        string csrf = await SignInAsync(admin, "admin", AdminPassword);
+        using (JsonDocument settings = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/security/settings")))
+        {
+            Assert.False(settings.RootElement.GetProperty("appsMayRegister").GetBoolean());
+        }
+
+        Assert.Contains("Off: only apps a site admin adds", await admin.GetStringAsync("/api/guard/privacy/record?language=en"), StringComparison.Ordinal);
+        using HttpRequestMessage turnOn = new(HttpMethod.Put, "/api/guard/security/settings")
+        {
+            Content = JsonContent.Create(new { retentionDays = 730, stepUpMinutes = 10, appsMayRegister = true }),
+        };
+        turnOn.Headers.Add(CsrfHeader, csrf);
+        HttpResponseMessage saved = await admin.SendAsync(turnOn);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        using (JsonDocument settings = JsonDocument.Parse(await saved.Content.ReadAsStringAsync()))
+        {
+            Assert.True(settings.RootElement.GetProperty("appsMayRegister").GetBoolean());
+        }
+
+        Assert.Contains("On: an app may register itself", await admin.GetStringAsync("/api/guard/privacy/record?language=en"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_burst_of_failed_sign_ins_alerts_the_admins_and_the_log_downloads_and_feeds_safely()
+    {
+        HttpClient admin = Client();
+        string csrf = await SignInAsync(admin, "admin", AdminPassword);
+
+        async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, object? body = null)
+        {
+            using HttpRequestMessage request = new(method, path) { Content = body is null ? null : JsonContent.Create(body) };
+            request.Headers.Add(CsrfHeader, csrf);
+            return await admin.SendAsync(request);
+        }
+
+        // A burst of failed sign-ins (the limiter blocks most of them): the next check tells the site admins, once. It's the
+        // site's first check, which looks back a window: what happened before it is told too.
+        using (IServiceScope scope = _factory!.Services.CreateScope())
+        {
+            AbpGuard.Services.SecurityAlerts alerts = scope.ServiceProvider.GetRequiredService<AbpGuard.Services.SecurityAlerts>();
+            for (int i = 0; i < 25; i++)
+            {
+                await Client().PostAsJsonAsync("/api/guard/session", new { username = $"=cmd|' /C calc'!A{i}", password = "wrong" });
+            }
+
+            List<AbpGuard.Services.SecurityAlert> told = await alerts.CheckAsync(CancellationToken.None);
+            Assert.Contains(told, a => a.Kind is "failed-sign-ins" or "auth.login.blocked");
+            Assert.DoesNotContain(await alerts.CheckAsync(CancellationToken.None), a => told.Any(t => t.Kind == a.Kind));
+        }
+
+        Assert.Contains(Directory.GetFiles(_mail, "*.eml").Select(File.ReadAllText), m => m.Contains("Security alert:", StringComparison.Ordinal));
+
+        // The log downloads as CSV, a formula someone typed as a username kept as text, and the download is logged.
+        HttpResponseMessage csv = await admin.GetAsync("/api/guard/security-events/export?type=auth.login.failed");
+        Assert.Equal(HttpStatusCode.OK, csv.StatusCode);
+        string text = await csv.Content.ReadAsStringAsync();
+        Assert.Contains("'=cmd|", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(",=cmd|", text, StringComparison.Ordinal);
+        using (JsonDocument logged = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/security-events?type=security.log.exported")))
+        {
+            Assert.Equal(1, logged.RootElement.GetProperty("total").GetInt32());
+        }
+
+        // The feed: https only, a secret before it's on, shown once.
+        await AssertErrorAsync(await SendAsync(HttpMethod.Put, "/api/guard/security/feed", new { url = "http://siem.example.test/in", enabled = false }), HttpStatusCode.BadRequest, null);
+        await AssertErrorAsync(await SendAsync(HttpMethod.Put, "/api/guard/security/feed", new { url = "https://siem.example.test/in", enabled = true }), HttpStatusCode.BadRequest, "no_secret");
+        using (JsonDocument secret = JsonDocument.Parse(await (await SendAsync(HttpMethod.Post, "/api/guard/security/feed/secret")).Content.ReadAsStringAsync()))
+        {
+            Assert.Equal(44, secret.RootElement.GetProperty("secret").GetString()!.Length);
+        }
+
+        HttpResponseMessage on = await SendAsync(HttpMethod.Put, "/api/guard/security/feed", new { url = "https://siem.example.test/in", enabled = true });
+        Assert.Equal(HttpStatusCode.OK, on.StatusCode);
+        using (JsonDocument feed = JsonDocument.Parse(await on.Content.ReadAsStringAsync()))
+        {
+            Assert.True(feed.RootElement.GetProperty("hasSecret").GetBoolean());
+            Assert.False(feed.RootElement.TryGetProperty("secret", out _));
+        }
+    }
+
+    [Fact]
+    public async Task A_hosts_plugin_rename_moves_what_Guard_keeps_by_plugin_once_and_a_row_already_under_the_new_key_wins()
+    {
+        _ = Client();
+        using IServiceScope scope = _factory!.Services.CreateScope();
+        Services.GuardDb guardDb = scope.ServiceProvider.GetRequiredService<Services.GuardDb>();
+        Guid person = Guid.NewGuid();
+        Guid running = Guid.NewGuid(), done = Guid.NewGuid();
+        await guardDb.RunAsync(async db =>
+        {
+            db.PrivacyStores.AddRange(
+                new Domain.PrivacyStoreRecord("guard-ldap.entries") { LegalBasis = Domain.LegalBases.Agreement, Notes = "kept" },
+                new Domain.PrivacyStoreRecord("seeder.people") { Notes = "former" },
+                new Domain.PrivacyStoreRecord("acme.seeder.people") { Notes = "new" },
+                new Domain.PrivacyStoreRecord("guard-ldap.x.entries"),
+                new Domain.PrivacyStoreRecord("guard.accounts"));
+            db.ConsentWithdrawals.Add(new Domain.ConsentWithdrawal(Guid.NewGuid(), person, "guard-ldap.entries"));
+            db.RetentionPeriods.AddRange(new Domain.RetentionPeriod { RuleKey = "guard-ldap.logs", Days = 30, LastCount = 4 },
+                new Domain.RetentionPeriod { RuleKey = "guard.sessions", Days = 90 });
+            Domain.SecuritySettings settings = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(db.SecuritySettings)
+                ?? db.SecuritySettings.Add(new Domain.SecuritySettings(Domain.SecuritySettings.SingletonId)).Entity;
+            settings.SecondFactorMethods = ["email", "messaging:sms", "messaging:whatsapp", "acme.messaging:whatsapp"];
+            db.Erasures.AddRange(
+                new Domain.PersonalDataErasureRecord(running, null, "{}", Domain.ErasureStates.Running) { Stores = """{"guard-ldap.entries":"failed","guard.accounts":"done"}""" },
+                new Domain.PersonalDataErasureRecord(done, null, null, Domain.ErasureStates.Done) { Stores = """{"guard-ldap.entries":"done"}""" });
+            await db.SaveChangesAsync();
+        }, requiresNew: true);
+
+        Services.Privacy.PersonalDataKeys keys = scope.ServiceProvider.GetRequiredService<Services.Privacy.PersonalDataKeys>();
+        Dictionary<string, string> former = new() { ["guard-ldap"] = "acme.ldap", ["seeder"] = "acme.seeder", ["messaging"] = "acme.messaging" };
+        Assert.Equal(new Services.Privacy.PluginRenameCounts(1, 1, 1, 1, 1), await keys.RenamePluginsAsync(former));
+
+        await guardDb.RunAsync(async db =>
+        {
+            Dictionary<string, Domain.PrivacyStoreRecord> stores = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToDictionaryAsync(db.PrivacyStores, s => s.StoreKey);
+            Assert.Equal(["acme.ldap.entries", "acme.seeder.people", "guard-ldap.x.entries", "guard.accounts", "seeder.people"], stores.Keys.Order(StringComparer.Ordinal));
+            Assert.Equal((Domain.LegalBases.Agreement, "kept"), (stores["acme.ldap.entries"].LegalBasis, stores["acme.ldap.entries"].Notes));
+            Assert.Equal("new", stores["acme.seeder.people"].Notes);
+            Assert.Equal("acme.ldap.entries", db.ConsentWithdrawals.Single(w => w.AccountId == person).StoreKey);
+            Assert.Equal(["acme.ldap.logs", "guard.sessions"], db.RetentionPeriods.Select(p => p.RuleKey).AsEnumerable().Order(StringComparer.Ordinal));
+            Assert.Equal((30, 4), db.RetentionPeriods.Where(p => p.RuleKey == "acme.ldap.logs").Select(p => new ValueTuple<int?, int>(p.Days, p.LastCount)).Single());
+            Assert.Equal(["email", "acme.messaging:sms", "messaging:whatsapp", "acme.messaging:whatsapp"], db.SecuritySettings.Single().SecondFactorMethods);
+            Dictionary<Guid, string> erasures = db.Erasures.ToDictionary(e => e.Id, e => e.Stores);
+            Assert.Equal(new Dictionary<string, string> { ["acme.ldap.entries"] = "failed", ["guard.accounts"] = "done" },
+                JsonSerializer.Deserialize<Dictionary<string, string>>(erasures[running]));
+            Assert.Equal(new Dictionary<string, string> { ["guard-ldap.entries"] = "done" }, JsonSerializer.Deserialize<Dictionary<string, string>>(erasures[done]));
+        });
+
+        // A second start moves nothing.
+        Assert.Equal(0, (await keys.RenamePluginsAsync(former)).Total);
+    }
+
+    [Theory]
+    [InlineData("guard-ldap.entries", '.', "acme.ldap.entries")]
+    [InlineData("messaging:sms", ':', "acme.messaging:sms")]
+    [InlineData("guard-ldap.x.entries", '.', null)]
+    [InlineData("guard-ldapx.entries", '.', null)]
+    [InlineData("guard-ldap.", '.', null)]
+    [InlineData("acme.ldap.entries", '.', null)]
+    public void A_key_is_the_former_plugins_only_with_its_separator_and_one_name(string key, char separator, string? renamed) =>
+        Assert.Equal(renamed, Services.Privacy.PersonalDataKeys.Renamed(key, "guard-ldap", "acme.ldap", separator)
+            ?? Services.Privacy.PersonalDataKeys.Renamed(key, "messaging", "acme.messaging", separator));
+
+    private static async Task AssertErrorAsync(HttpResponseMessage response, HttpStatusCode status, string? code)
     {
         Assert.Equal(status, response.StatusCode);
         Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);

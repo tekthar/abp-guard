@@ -23,6 +23,9 @@ public class StepUpCoverageTests
         ["TokensController.Revoke"] = "takes access away: an admin stopping a leaked token mustn't be slowed",
         ["ServiceAccountsController.RevokeToken"] = "takes access away, as above",
         ["OAuthAppsController.Delete"] = "takes access away, as above",
+        ["ErasuresController.PreviewOutside"] = "reads only: what erasing an address would do",
+        ["SecurityFeedController.Send"] = "sends what's waiting to the address already set, as the feed's worker does each minute",
+        ["SecurityAlertsController.Check"] = "checks the log for alerts, as its worker does every five minutes",
     };
 
     private static readonly Type[] AlwaysChecked = [typeof(AccountsController), typeof(MergesController)];

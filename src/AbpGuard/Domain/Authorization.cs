@@ -25,6 +25,11 @@ public class Role : Entity<Guid>
     public string Key { get; private set; } = null!;
     public string Name { get; set; } = null!;
     public string? Description { get; set; }
+
+    /// <summary>Its name and description in other languages, by language code.</summary>
+    public Dictionary<string, string> Names { get; set; } = [];
+    public Dictionary<string, string> Descriptions { get; set; } = [];
+
     public bool IsSystem { get; private set; }
 }
 

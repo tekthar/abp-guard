@@ -52,7 +52,7 @@ public class AccountLookup(GuardDb guardDb) : IAccountLookup, ITransientDependen
     {
         string normalized = GuardConstants.Normalize(text), like = SqlLike.Containing(normalized);
         return guardDb.RunAsync<IReadOnlyList<AccountInfo>>(async db => (await db.Accounts.AsNoTracking()
-                .Where(a => a.NormalizedUsername.Contains(normalized) || EF.Functions.ILike(a.DisplayName, like))
+                .Where(a => a.NormalizedUsername.Contains(normalized) || EF.Functions.ILike(a.DisplayName, like) || (a.OtherNames != null && EF.Functions.ILike(a.OtherNames, like)))
                 .OrderBy(a => a.Username)
                 .Take(max)
                 .ToListAsync(cancellationToken))
@@ -61,7 +61,7 @@ public class AccountLookup(GuardDb guardDb) : IAccountLookup, ITransientDependen
     }
 
     internal static AccountInfo ToInfo(Account a) => new(a.Id, a.Username, a.DisplayName, a.MailAddress, a.Status == AccountStatus.Active, a.DirectoryId, a.Language,
-        a.TimeZone, a.MergedIntoId, a.IsService) { IsAgent = a.IsAgent };
+        a.TimeZone, a.MergedIntoId, a.IsService) { IsAgent = a.IsAgent, DisplayNames = a.DisplayNames.Count == 0 ? null : a.DisplayNames, Picture = a.Picture };
 }
 
 [ExposeServices(typeof(IGroupLookup))]
@@ -103,7 +103,7 @@ public class GroupLookup(GuardDb guardDb) : IGroupLookup, ITransientDependency
             .ToList(), cancellationToken: cancellationToken);
     }
 
-    internal static GroupInfo ToInfo(Group g) => new(g.Id, g.Name, g.Description, g.DirectoryId, g.Kind);
+    internal static GroupInfo ToInfo(Group g) => new(g.Id, g.Name, g.Description, g.DirectoryId, g.Kind) { Names = g.Names.Count == 0 ? null : g.Names };
 }
 
 [ExposeServices(typeof(IMembershipResolver))]

@@ -20,6 +20,9 @@ public class UserDirectory : Entity<Guid>
     }
 
     public string Name { get; set; } = null!;
+
+    /// <summary>Its name in other languages, by language code; Name stays the English, or only, one.</summary>
+    public Dictionary<string, string> Names { get; set; } = [];
     public string Type { get; private set; } = null!;
     public int Order { get; set; }
     public bool IsActive { get; set; }
@@ -63,6 +66,13 @@ public class DirectoryUser : Entity<Guid>
     public string Username { get; private set; } = null!;
     public string NormalizedUsername { get; private set; } = null!;
     public string? DisplayName { get; set; }
+
+    /// <summary>
+    /// The person's name in other languages as the directory gives it. Null: the directory says
+    /// nothing about names by language (an older connector), and the account's stay as they are; empty: it has none.
+    /// </summary>
+    public Dictionary<string, string>? DisplayNames { get; set; }
+
     public string? Email { get; set; }
     public bool IsActive { get; set; }
 
@@ -114,6 +124,31 @@ public class Account : Entity<Guid>
     public string Username { get; set; } = null!;
     public string NormalizedUsername { get; private set; } = null!;
     public string DisplayName { get; set; } = null!;
+
+    /// <summary>
+    /// The person's name in other languages, by language code: `{ "ar": "عمر السبيعي" }`.
+    /// <see cref="DisplayName"/> stays the name as written (English, or the only one), which history and exports keep.
+    /// </summary>
+    public Dictionary<string, string> DisplayNames { get; set; } = [];
+
+    /// <summary>Every name in <see cref="DisplayNames"/>, in one line: what a search for a person matches besides the display name.</summary>
+    public string? OtherNames { get; private set; }
+
+    /// <summary>Sets the person's names in other languages (blank ones dropped), and the line search reads.</summary>
+    public void SetDisplayNames(IReadOnlyDictionary<string, string>? names)
+    {
+        DisplayNames = (names ?? new Dictionary<string, string>())
+            .Where(n => !string.IsNullOrWhiteSpace(n.Key) && !string.IsNullOrWhiteSpace(n.Value))
+            .ToDictionary(n => n.Key.Trim(), n => n.Value.Trim(), StringComparer.Ordinal);
+        OtherNames = DisplayNames.Count == 0 ? null : string.Join(" · ", DisplayNames.Values);
+    }
+
+    /// <summary>
+    /// The account's picture: a path on the site the host serves (<see cref="AccountPictures.IsPath"/>), or
+    /// null for initials. Only service accounts have one for now; once people do, it's personal data.
+    /// </summary>
+    public string? Picture { get; set; }
+
     public string? Email { get; set; }
     public AccountStatus Status { get; set; }
     public string? StatusReason { get; set; }
@@ -159,6 +194,16 @@ public class Account : Entity<Guid>
     /// personal access tokens an admin makes for it.
     /// </summary>
     public bool IsService { get; set; }
+
+    /// <summary>When it was erased: its name is its pseudonym, and it stays inactive for good.</summary>
+    public DateTime? ErasedAt { get; set; }
+
+    /// <summary>A new username (an erasure's pseudonym): the old one is free for someone else, who inherits nothing.</summary>
+    public void ChangeUsername(string username)
+    {
+        Username = username;
+        NormalizedUsername = GuardConstants.Normalize(username);
+    }
 
     /// <summary>
     /// An agent's account: a service account an automated actor works through, made and kept by the host. It holds no
@@ -211,6 +256,9 @@ public class Group : Entity<Guid>
     public Guid DirectoryId { get; private set; }
     public string? ExternalId { get; set; }
     public string Name { get; private set; } = null!;
+
+    /// <summary>Its name in other languages, by language code; Name stays the English, or only, one.</summary>
+    public Dictionary<string, string> Names { get; set; } = [];
     public string NormalizedName { get; private set; } = null!;
     public string? Description { get; set; }
 
@@ -397,6 +445,13 @@ public class SecuritySettings : Entity<Guid>
     /// sign-in, so an admin's later choice stays.
     /// </summary>
     public bool AdminsTwoFactorSeeded { get; set; }
+
+    /// <summary>
+    /// Whether apps (MCP clients) may register themselves: off on a new site, as each is somewhere the
+    /// site's data can go once a person allows it; an upgraded site keeps it on (its migration says so) until an admin
+    /// turns it off. <c>Guard:Oidc:ClientRegistration</c> false turns it off whatever this says.
+    /// </summary>
+    public bool AppsMayRegister { get; set; }
 
     /// <summary>
     /// The sent codes a second step may use: <c>email</c>, and channels' keys (<c>messaging:sms</c>). None at

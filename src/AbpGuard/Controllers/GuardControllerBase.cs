@@ -77,6 +77,8 @@ public static class GuardEvents
         AccountUpdatedEto x => publisher.PublishAsync(x, cancellationToken),
         AccountDeactivatedEto x => publisher.PublishAsync(x, cancellationToken),
         AccountReactivatedEto x => publisher.PublishAsync(x, cancellationToken),
+        AccountChangedEto x => publisher.PublishAsync(x, cancellationToken),
+        AccountErasedEto x => publisher.PublishAsync(x, cancellationToken),
         AccountMergedEto x => publisher.PublishAsync(x, cancellationToken),
         GroupCreatedEto x => publisher.PublishAsync(x, cancellationToken),
         MembershipChangedEto x => publisher.PublishAsync(x, cancellationToken),
@@ -98,10 +100,14 @@ public sealed record AccountDto(
     /// <summary>An agent's account: a service account an automated actor works through, which holds no tokens.</summary>
     public bool IsAgent { get; init; }
 
+    /// <summary>The person's name in other languages; DisplayName is the name as written.</summary>
+    public Dictionary<string, string> DisplayNames { get; init; } = [];
+
     public static AccountDto From(Account a, string directoryName) =>
         new(a.Id, a.Username, a.DisplayName, a.Email, a.Status.ToString(), a.StatusReason, a.DirectoryId, directoryName, a.LastLoginAt, a.MergedIntoId, a.MailTo, a.IsService)
         {
             IsAgent = a.IsAgent,
+            DisplayNames = a.DisplayNames,
         };
 }
 
@@ -123,7 +129,11 @@ public sealed record AccountDetailDto(AccountDto Account, List<IdentityDto> Iden
 public sealed record GroupDto(
     Guid Id, string Name, string? Description, Guid DirectoryId, string DirectoryName,
     bool IsLocal, bool Writable, int DirectMemberCount, int MemberGroupCount, string Kind, bool Computed,
-    Dictionary<string, string> Attributes, List<string> EmailDomains, string TwoFactor = TwoFactorModes.Off);
+    Dictionary<string, string> Attributes, List<string> EmailDomains, string TwoFactor = TwoFactorModes.Off)
+{
+    /// <summary>Its name in other languages; Name is the English, or only, one.</summary>
+    public Dictionary<string, string> Names { get; init; } = [];
+}
 
 public sealed record GroupMemberDto(string MemberType, Guid MemberId, string Name, string? DisplayName, string DirectoryName, string Source, bool Removable);
 
@@ -135,7 +145,12 @@ public sealed record DirectoryDto(
     Guid Id, string Name, string Type, string TypeDisplayName, int Order, bool IsActive, bool AuthenticationEnabled,
     Dictionary<string, string> Settings, int? SyncIntervalMinutes, DateTime? LastSyncAt, bool? LastSyncSucceeded,
     string? LastSyncMessage, int UserCount, int GroupCount, bool ConnectorAvailable, string? PluginKey,
-    bool SecretsReadable = true); // false: stored secrets can't be decrypted on this server; re-enter them
+    bool SecretsReadable = true, // false: stored secrets can't be decrypted on this server; re-enter them
+    IReadOnlyList<string>? Warnings = null) // what its connector warns of in its settings
+{
+    /// <summary>Its name in other languages; Name is the English, or only, one.</summary>
+    public Dictionary<string, string> Names { get; init; } = [];
+}
 
 public sealed record SyncRunDto(
     Guid Id, Guid DirectoryId, DateTime StartedAt, DateTime? FinishedAt, bool? Succeeded,

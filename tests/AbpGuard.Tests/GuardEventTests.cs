@@ -10,7 +10,7 @@ public class GuardEventTests
         HashSet<Type> etos = exported.Where(t => t.IsClass && !t.IsAbstract && t.Name.EndsWith("Eto", StringComparison.Ordinal)).ToHashSet();
         HashSet<Type> carried = exported.Where(AbpGuardModule.Carries).ToHashSet();
 
-        Assert.Equal(8, etos.Count);
+        Assert.Equal(10, etos.Count);
         Assert.Equal(etos, carried);
         Assert.False(AbpGuardModule.Carries(typeof(GuardEvent)));
         Assert.False(AbpGuardModule.Carries(typeof(string)));

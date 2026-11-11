@@ -28,7 +28,8 @@ public class DirectoriesController(
 {
     public sealed record DirectoryTypeDto(string Type, string DisplayName, List<string> Capabilities, List<DirectorySettingDefinition> Settings, string? PluginKey);
 
-    public sealed record DirectoryInput(string Name, string Type, [property: JsonRequired] bool IsActive, [property: JsonRequired] bool AuthenticationEnabled, int? SyncIntervalMinutes, Dictionary<string, string>? Settings);
+    public sealed record DirectoryInput(string Name, string Type, [property: JsonRequired] bool IsActive, [property: JsonRequired] bool AuthenticationEnabled, int? SyncIntervalMinutes, Dictionary<string, string>? Settings,
+        Dictionary<string, string>? Names = null);
 
     public sealed record ReorderInput(List<Guid> DirectoryIds);
 
@@ -61,11 +62,12 @@ public class DirectoriesController(
         // An internal directory keeps its accounts in Guard (a "Customers" directory for sign-ups); others need a connector.
         ConnectorDescription? connector = input.Type == GuardConstants.InternalType ? null : available.FirstOrDefault(c => c.Type == input.Type)
             ?? throw new UserFriendlyException($"No connector for directory type '{input.Type}'. Is its plugin enabled?");
+        await CheckSettingsAsync(input.Type, input.Settings);
 
         (DirectoryDto dto, List<object> events) = await guardDb.RunAsync(async db =>
         {
             int order = (await db.Directories.MaxAsync(d => (int?)d.Order, cancellationToken) ?? 0) + 1;
-            UserDirectory directory = new(Guid.NewGuid(), RequireName(input.Name), input.Type, order);
+            UserDirectory directory = new(Guid.NewGuid(), RequireName(input.Name), input.Type, order) { Names = GuardNamesByLanguage.Clean(input.Names, 200) };
             List<string> secretsSet = Apply(directory, input, connector, isNew: true);
             db.Directories.Add(directory);
             audit.Add(db, SecurityAuditTypes.DirectoryCreated, Target(directory), new
@@ -94,6 +96,11 @@ public class DirectoriesController(
     public async Task<DirectoryDto> Update(Guid id, [FromBody] DirectoryInput input, CancellationToken cancellationToken)
     {
         List<ConnectorDescription> available = await connectors.DescribeAllAsync();
+        if (input.Type != GuardConstants.InternalType)
+        {
+            await CheckSettingsAsync(input.Type, input.Settings);
+        }
+
         (DirectoryDto dto, List<object> events) = await guardDb.RunAsync(async db =>
         {
             UserDirectory directory = await db.Directories.FirstOrDefaultAsync(d => d.Id == id, cancellationToken)
@@ -111,6 +118,11 @@ public class DirectoriesController(
 
             var before = new { directory.Name, directory.IsActive, directory.AuthenticationEnabled, directory.SyncIntervalMinutes, Settings = Settings(directory) };
             directory.Name = RequireName(input.Name);
+            if (input.Names is not null)
+            {
+                directory.Names = GuardNamesByLanguage.Clean(input.Names, 200);
+            }
+
             List<string> secretsReplaced = Apply(directory, input, connector, isNew: false);
             // Whoever can point a directory at another host, or change its bind password, sees every later sign-in's password.
             Dictionary<string, string> after = Settings(directory);
@@ -290,6 +302,17 @@ public class DirectoriesController(
         await guardDb.RunAsync(db => db.Directories.AsNoTracking().FirstOrDefaultAsync(d => d.Id == id, cancellationToken), cancellationToken: cancellationToken)
         ?? throw new EntityNotFoundException(typeof(UserDirectory), id);
 
+    /// <summary>Refuses settings the directory's connector finds wrong (a name attribute without a language, say), each problem said.</summary>
+    private async Task CheckSettingsAsync(string type, Dictionary<string, string>? settings)
+    {
+        IReadOnlyList<string> problems = await connectors.WithConnectorAsync(type, (c, _) =>
+            Task.FromResult(c is IDirectorySettingsValidator v ? v.ProblemsIn(settings ?? new()) : (IReadOnlyList<string>)[]));
+        if (problems.Count > 0)
+        {
+            throw new UserFriendlyException(string.Join(" ", problems));
+        }
+    }
+
     /// <summary>Applies the input to the directory; returns the names of the secrets it set or replaced (never their values).</summary>
     private List<string> Apply(UserDirectory directory, DirectoryInput input, ConnectorDescription? connector, bool isNew)
     {
@@ -355,6 +378,15 @@ public class DirectoriesController(
         Dictionary<Guid, int> groupCounts = await db.Groups.Where(g => ids.Contains(g.DirectoryId))
             .GroupBy(g => g.DirectoryId).ToDictionaryAsync(g => g.Key, g => g.Count(), cancellationToken);
 
+        // What each directory's connector warns of in its settings: plain-text connections, certificate checks off.
+        Dictionary<Guid, IReadOnlyList<string>> warnings = [];
+        foreach (UserDirectory d in directories.Where(d => !d.IsInternal))
+        {
+            Dictionary<string, string> plain = JsonSerializer.Deserialize<Dictionary<string, string>>(d.SettingsJson) ?? new();
+            warnings[d.Id] = await connectors.WithConnectorAsync(d.Type, (c, _) =>
+                Task.FromResult(c is IDirectoryConnectorWarnings w ? w.WarningsFor(plain) : (IReadOnlyList<string>)[]));
+        }
+
         return directories.Select(d =>
         {
             ConnectorDescription? connector = available.FirstOrDefault(c => c.Type == d.Type);
@@ -369,7 +401,7 @@ public class DirectoriesController(
                 d.Id, d.Name, d.Type, d.IsInternal ? "Internal" : connector?.DisplayName ?? d.Type, d.Order, d.IsActive, d.AuthenticationEnabled,
                 settings, d.SyncIntervalMinutes, d.LastSyncAt, d.LastSyncSucceeded, d.LastSyncMessage,
                 userCounts.GetValueOrDefault(d.Id), groupCounts.GetValueOrDefault(d.Id),
-                d.IsInternal || connector is not null, connector?.PluginKey, secretsReadable);
+                d.IsInternal || connector is not null, connector?.PluginKey, secretsReadable, warnings.GetValueOrDefault(d.Id) ?? []) { Names = d.Names };
         }).ToList();
     }
 }

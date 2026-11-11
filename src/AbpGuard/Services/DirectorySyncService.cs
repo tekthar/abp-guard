@@ -82,7 +82,16 @@ public class DirectorySyncService(
                         return (u, g);
                     });
 
-                    await ApplyUsersAsync(db, directory, users, run, cancellationToken);
+                    int left = await ApplyUsersAsync(db, directory, users, run, cancellationToken);
+                    if (left > 0)
+                    {
+                        logger.LogWarning("Sync of directory {Directory}: {Count} names by language had no valid language code and were left out", directoryName, left);
+                    }
+
+                    if (NoNamesFound(users))
+                    {
+                        logger.LogWarning("Sync of directory {Directory}: names by language are set up, but no one had any. Check that the account the directory is read with can read each language's attribute", directoryName);
+                    }
                     await db.SaveChangesAsync(cancellationToken);
                     await ApplyGroupsAsync(db, directory, groups, run, cancellationToken);
                 }
@@ -140,17 +149,20 @@ public class DirectorySyncService(
         return run;
     }
 
-    private static async Task ApplyUsersAsync(GuardDbContext db, UserDirectory directory, List<DirectoryUserRecord> records, SyncRun run, CancellationToken cancellationToken)
+    /// <summary>Applies the directory's users; returns how many names by language were left out for a code that isn't a language's.</summary>
+    private static async Task<int> ApplyUsersAsync(GuardDbContext db, UserDirectory directory, List<DirectoryUserRecord> records, SyncRun run, CancellationToken cancellationToken)
     {
         List<DirectoryUser> existing = await db.DirectoryUsers.Where(u => u.DirectoryId == directory.Id).ToListAsync(cancellationToken);
         Dictionary<string, DirectoryUser> byExternalId = existing.ToDictionary(u => u.ExternalId, StringComparer.OrdinalIgnoreCase);
         Dictionary<string, DirectoryUser> byUsername = existing.ToDictionary(u => u.NormalizedUsername);
         HashSet<Guid> seen = [];
         DateTime now = DateTime.UtcNow;
+        int leftOut = 0;
 
         foreach (DirectoryUserRecord record in records.Where(r => !string.IsNullOrWhiteSpace(r.Username)))
         {
             string normalized = GuardConstants.Normalize(record.Username);
+            Dictionary<string, string>? names = record.DisplayNames is null ? null : SyncedNames(record.DisplayNames, ref leftOut);
             DirectoryUser? user = byExternalId.GetValueOrDefault(record.ExternalId) ?? byUsername.GetValueOrDefault(normalized);
             if (user is null)
             {
@@ -160,7 +172,7 @@ public class DirectorySyncService(
                 run.UsersAdded++;
             }
             else if (user.Username != record.Username.Trim() || user.DisplayName != record.DisplayName || user.Email != record.Email
-                     || user.IsActive != record.IsActive || user.ExternalId != record.ExternalId)
+                     || user.IsActive != record.IsActive || user.ExternalId != record.ExternalId || (names is not null && !SameNames(user.DisplayNames, names)))
             {
                 run.UsersUpdated++;
             }
@@ -168,6 +180,10 @@ public class DirectorySyncService(
             user.ExternalId = record.ExternalId;
             user.SetUsername(record.Username);
             user.DisplayName = record.DisplayName;
+            if (names is not null)
+            {
+                user.DisplayNames = names;
+            }
             user.Email = record.Email;
             user.IsActive = record.IsActive;
             user.LastSyncedAt = now;
@@ -179,6 +195,8 @@ public class DirectorySyncService(
             missing.IsActive = false;
             run.UsersDeactivated++;
         }
+
+        return leftOut;
     }
 
     private static async Task ApplyGroupsAsync(GuardDbContext db, UserDirectory directory, List<DirectoryGroupRecord> records, SyncRun run, CancellationToken cancellationToken)
@@ -266,4 +284,41 @@ public class DirectorySyncService(
         MembershipChangedEto x => events.PublishAsync(x, cancellationToken),
         _ => Task.CompletedTask,
     };
+
+    private static bool SameNames(IReadOnlyDictionary<string, string>? a, IReadOnlyDictionary<string, string> b) =>
+        a is not null && a.Count == b.Count && a.All(n => b.TryGetValue(n.Key, out string? v) && v == n.Value);
+
+    /// <summary>
+    /// Names by language were asked for (the connector gave maps, not null) and every person's came back empty: most often
+    /// an account that can't read those attributes, which would otherwise clear everyone's names without a word.
+    /// </summary>
+    internal static bool NoNamesFound(IReadOnlyCollection<DirectoryUserRecord> users) =>
+        users.Any(u => u.DisplayNames is not null) && users.All(u => u.DisplayNames is null or { Count: 0 });
+
+    /// <summary>
+    /// A directory's names by language as the account keeps them, as a synced display name is treated: trimmed, cut at
+    /// the name's length, blank ones left out, and those whose code isn't a language's left out and counted.
+    /// </summary>
+    internal static Dictionary<string, string> SyncedNames(IReadOnlyDictionary<string, string> names, ref int leftOut)
+    {
+        Dictionary<string, string> clean = new(StringComparer.Ordinal);
+        foreach ((string code, string name) in names)
+        {
+            string value = (name ?? "").Trim();
+            if (value.Length == 0)
+            {
+                continue;
+            }
+
+            if (!DirectoryNames.IsLanguageCode(code?.Trim()))
+            {
+                leftOut++;
+                continue;
+            }
+
+            clean[code!.Trim()] = value.Length > AccountCorrections.NameLength ? value[..AccountCorrections.NameLength] : value;
+        }
+
+        return clean;
+    }
 }

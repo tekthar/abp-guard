@@ -39,6 +39,28 @@ public class GuardDbContext(DbContextOptions<GuardDbContext> options) : AbpDbCon
     public DbSet<SentCode> SentCodes => Set<SentCode>();
     public DbSet<PrivacyStoreRecord> PrivacyStores => Set<PrivacyStoreRecord>();
     public DbSet<PrivacySettings> PrivacySettings => Set<PrivacySettings>();
+    public DbSet<LegalHold> LegalHolds => Set<LegalHold>();
+    public DbSet<RetentionSettings> RetentionSettings => Set<RetentionSettings>();
+    public DbSet<SecurityFeedSettings> SecurityFeeds => Set<SecurityFeedSettings>();
+    public DbSet<SecurityAlertState> SecurityAlertStates => Set<SecurityAlertState>();
+    public DbSet<PrivacyNoticeVersion> PrivacyNotices => Set<PrivacyNoticeVersion>();
+    public DbSet<PrivacyAcceptance> PrivacyAcceptances => Set<PrivacyAcceptance>();
+    public DbSet<ConsentWithdrawal> ConsentWithdrawals => Set<ConsentWithdrawal>();
+    public DbSet<RetentionPeriod> RetentionPeriods => Set<RetentionPeriod>();
+    public DbSet<PersonalDataErasureRecord> Erasures => Set<PersonalDataErasureRecord>();
+
+    /// <summary>A map of names by language in a jsonb column, empty by default.</summary>
+    private static void NamesMap(Microsoft.EntityFrameworkCore.Metadata.Builders.PropertyBuilder<Dictionary<string, string>> property)
+    {
+        System.Text.Json.JsonSerializerOptions json = new(System.Text.Json.JsonSerializerDefaults.Web);
+        property.HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb").HasConversion(
+            v => System.Text.Json.JsonSerializer.Serialize(v, json),
+            v => System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(v, json) ?? new(),
+            new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<Dictionary<string, string>>(
+                (a, b) => System.Text.Json.JsonSerializer.Serialize(a, json) == System.Text.Json.JsonSerializer.Serialize(b, json),
+                v => System.Text.Json.JsonSerializer.Serialize(v, json).GetHashCode(),
+                v => new Dictionary<string, string>(v)));
+    }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -54,6 +76,7 @@ public class GuardDbContext(DbContextOptions<GuardDbContext> options) : AbpDbCon
         {
             b.ToTable("directories");
             b.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            NamesMap(b.Property(x => x.Names));
             b.Property(x => x.Type).HasMaxLength(64).IsRequired();
             b.Property(x => x.SettingsJson).HasColumnType("jsonb");
             b.HasIndex(x => x.Order);
@@ -62,6 +85,15 @@ public class GuardDbContext(DbContextOptions<GuardDbContext> options) : AbpDbCon
         builder.Entity<DirectoryUser>(b =>
         {
             b.ToTable("directory_users");
+            // Null until a connector says something about names by language.
+            System.Text.Json.JsonSerializerOptions names = new(System.Text.Json.JsonSerializerDefaults.Web);
+            b.Property(x => x.DisplayNames).HasColumnType("jsonb").HasConversion(
+                v => v == null ? null : System.Text.Json.JsonSerializer.Serialize(v, names),
+                v => v == null ? null : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(v, names),
+                new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<Dictionary<string, string>?>(
+                    (a, b) => System.Text.Json.JsonSerializer.Serialize(a, names) == System.Text.Json.JsonSerializer.Serialize(b, names),
+                    v => System.Text.Json.JsonSerializer.Serialize(v, names).GetHashCode(),
+                    v => v == null ? null : new Dictionary<string, string>(v)));
             b.Property(x => x.ExternalId).HasMaxLength(256).IsRequired();
             b.Property(x => x.Username).HasMaxLength(256).IsRequired();
             b.Property(x => x.NormalizedUsername).HasMaxLength(256).IsRequired();
@@ -81,6 +113,17 @@ public class GuardDbContext(DbContextOptions<GuardDbContext> options) : AbpDbCon
             b.Property(x => x.TimeZone).HasMaxLength(64);
             b.Property(x => x.Motion).HasMaxLength(16);
             b.Property(x => x.MailTo).HasMaxLength(320);
+            b.Property(x => x.Picture).HasMaxLength(AccountPictures.MaxLength);
+            // The person's name in other languages, and their text for search.
+            System.Text.Json.JsonSerializerOptions names = new(System.Text.Json.JsonSerializerDefaults.Web);
+            b.Property(x => x.DisplayNames).HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb").HasConversion(
+                v => System.Text.Json.JsonSerializer.Serialize(v, names),
+                v => System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(v, names) ?? new(),
+                new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<Dictionary<string, string>>(
+                    (a, b) => System.Text.Json.JsonSerializer.Serialize(a, names) == System.Text.Json.JsonSerializer.Serialize(b, names),
+                    v => System.Text.Json.JsonSerializer.Serialize(v, names).GetHashCode(),
+                    v => new Dictionary<string, string>(v)));
+            b.Property(x => x.OtherNames).HasMaxLength(2048);
             b.Ignore(x => x.MailAddress);
             b.HasIndex(x => x.NormalizedUsername).IsUnique();
             b.HasIndex(x => x.MergedIntoId);
@@ -123,6 +166,7 @@ public class GuardDbContext(DbContextOptions<GuardDbContext> options) : AbpDbCon
         {
             b.ToTable("groups");
             b.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            NamesMap(b.Property(x => x.Names));
             b.Property(x => x.NormalizedName).HasMaxLength(256).IsRequired();
             b.Property(x => x.Kind).HasMaxLength(16).IsRequired().HasDefaultValue(GroupKinds.Standard);
             b.Property(x => x.TwoFactor).HasMaxLength(16).IsRequired().HasDefaultValue(TwoFactorModes.Off);
@@ -166,6 +210,8 @@ public class GuardDbContext(DbContextOptions<GuardDbContext> options) : AbpDbCon
             b.ToTable("roles");
             b.Property(x => x.Key).HasMaxLength(64).IsRequired();
             b.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            NamesMap(b.Property(x => x.Names));
+            NamesMap(b.Property(x => x.Descriptions));
             b.HasIndex(x => x.Key).IsUnique();
         });
 
@@ -313,6 +359,83 @@ public class GuardDbContext(DbContextOptions<GuardDbContext> options) : AbpDbCon
             b.Property(x => x.StoreKey).HasMaxLength(200);
             b.Property(x => x.LegalBasis).HasMaxLength(32);
             b.Property(x => x.Notes).HasMaxLength(4000);
+        });
+
+        builder.Entity<PrivacyNoticeVersion>(b =>
+        {
+            b.ToTable("privacy_notices");
+            b.HasKey(x => x.Number);
+            b.Property(x => x.Number).UseIdentityByDefaultColumn();
+            b.Property(x => x.Texts).HasColumnType("jsonb").IsRequired();
+        });
+
+        builder.Entity<PrivacyAcceptance>(b =>
+        {
+            b.ToTable("privacy_acceptances");
+            b.Property(x => x.Address).HasMaxLength(320);
+            b.Property(x => x.Where).HasMaxLength(32).IsRequired();
+            b.Property(x => x.Ip).HasMaxLength(64);
+            b.HasIndex(x => x.AccountId);
+            b.HasIndex(x => x.Address);
+        });
+
+        builder.Entity<ConsentWithdrawal>(b =>
+        {
+            b.ToTable("consent_withdrawals");
+            b.Property(x => x.StoreKey).HasMaxLength(200).IsRequired();
+            b.Property(x => x.Note).HasMaxLength(2000);
+            b.HasIndex(x => x.AccountId);
+        });
+
+        builder.Entity<SecurityFeedSettings>(b =>
+        {
+            b.ToTable("security_feed");
+            b.Property(x => x.Id).ValueGeneratedNever();
+            b.Property(x => x.Url).HasMaxLength(2000);
+            b.Property(x => x.LastError).HasMaxLength(2000);
+        });
+
+        builder.Entity<SecurityAlertState>(b =>
+        {
+            b.ToTable("security_alerts");
+            b.Property(x => x.Id).ValueGeneratedNever();
+            b.Property(x => x.Sent).HasColumnType("jsonb").IsRequired();
+        });
+
+        builder.Entity<RetentionSettings>(b =>
+        {
+            b.ToTable("retention_settings");
+            b.Property(x => x.Id).ValueGeneratedNever();
+        });
+
+        builder.Entity<RetentionPeriod>(b =>
+        {
+            b.ToTable("retention_periods");
+            b.HasKey(x => x.RuleKey);
+            b.Property(x => x.RuleKey).HasMaxLength(200);
+        });
+
+        builder.Entity<LegalHold>(b =>
+        {
+            b.ToTable("legal_holds");
+            b.Property(x => x.Address).HasMaxLength(320);
+            b.Property(x => x.Reason).HasMaxLength(1000).IsRequired();
+            b.HasIndex(x => x.AccountId);
+            b.HasIndex(x => x.Address);
+        });
+
+        builder.Entity<PersonalDataErasureRecord>(b =>
+        {
+            b.ToTable("erasures");
+            b.Property(x => x.Number).UseIdentityByDefaultColumn();
+            b.HasIndex(x => x.Number).IsUnique();
+            b.Property(x => x.Subject).HasColumnType("jsonb");
+            b.Property(x => x.Stores).HasColumnType("jsonb").IsRequired();
+            b.Property(x => x.State).HasMaxLength(16).IsRequired();
+            b.Property(x => x.Reason).HasMaxLength(2000);
+            b.Property(x => x.DeclinedReason).HasMaxLength(2000);
+            b.HasIndex(x => x.AccountId);
+            b.HasIndex(x => x.State);
         });
 
         builder.Entity<PrivacySettings>(b =>

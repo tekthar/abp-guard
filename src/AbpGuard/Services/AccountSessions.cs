@@ -243,3 +243,36 @@ public sealed class EndSignInOnRevocation(AccountSessions sessions) : OpenIddict
         }
     }
 }
+
+/// <summary>
+/// An access token made before the site renamed its claims and scopes reads as made under today's names
+/// (<see cref="GuardNames.Former"/>), before anything reads its claims: it keeps its limits until it expires. One with a
+/// session, mode, token or limit claim under a name Guard doesn't know is refused.
+/// </summary>
+public sealed class TokenNamesOfToday(Microsoft.Extensions.Options.IOptions<GuardNames> names)
+    : OpenIddict.Validation.IOpenIddictValidationHandler<OpenIddict.Validation.OpenIddictValidationEvents.ProcessAuthenticationContext>
+{
+    public static OpenIddict.Validation.OpenIddictValidationHandlerDescriptor Descriptor { get; } =
+        OpenIddict.Validation.OpenIddictValidationHandlerDescriptor.CreateBuilder<OpenIddict.Validation.OpenIddictValidationEvents.ProcessAuthenticationContext>()
+            .UseSingletonHandler<TokenNamesOfToday>()
+            .SetOrder(OpenIddict.Validation.OpenIddictValidationHandlers.ValidateAccessToken.Descriptor.Order + 1_000)
+            .SetType(OpenIddict.Validation.OpenIddictValidationHandlerType.Custom)
+            .Build();
+
+    public ValueTask HandleAsync(OpenIddict.Validation.OpenIddictValidationEvents.ProcessAuthenticationContext context)
+    {
+        if (context.AccessTokenPrincipal is { } principal)
+        {
+            if (names.Value.Current(principal, OpenIddictConstants.Claims.Private.Scope) is { } current)
+            {
+                context.AccessTokenPrincipal = current;
+            }
+            else
+            {
+                context.Reject(OpenIddictConstants.Errors.InvalidToken, "The token carries a claim this site doesn't know.");
+            }
+        }
+
+        return ValueTask.CompletedTask;
+    }
+}

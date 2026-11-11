@@ -22,7 +22,11 @@ instead of writing its own security. Nothing in it assumes one product: every na
 - **Self-service:** sign-up with a confirmed email, and password reset.
 - **Authorization with [CASL .NET](https://www.nuget.org/packages/Casl.Net):** roles hold rules in CASL's format; grants
   give a role to an account or a group with a scope; the same rules filter queries in SQL and go to the browser.
-- **The security log**, kept for a set number of days.
+- **Personal data:** a map of every store a site's modules and plugins keep, the record of processing, a person's
+  data exported, names and addresses corrected, erasure with legal holds, retention periods swept daily, and a privacy
+  notice with consent.
+- **The security log**, kept for a set number of days, downloaded as CSV or fed to a receiver as it's written, with
+  alerts to site admins of what may be a breach.
 
 Guard keeps its tables in the `guard` schema of the host's database, or in a database of its own.
 
@@ -65,11 +69,13 @@ Configure it in the `Guard` section (`GuardOptions`):
 - **Stored and wire names:** `Guard:Names` (`GuardNames`) holds what Guard writes into tokens, headers, stored rows and
   protected data: the claims (`guard_token` and the like), the anti-forgery header (`X-Guard-Csrf`), the token prefix
   (`guard_pat_`), the app id and secret prefixes, the read scope (`api.read`), the second step's grant type
-  (`urn:abpguard:grant-type:second-factor`) and the Data Protection purposes' prefix (`AbpGuard`). Choose them before
-  your first release: changing one later breaks whatever already holds the old one. Refusals carry the error codes
-  `Guard:Forbidden` and `Guard:TooManyRequests`.
+  (`urn:abpguard:grant-type:second-factor`), the Data Protection purposes' prefix (`AbpGuard`) and the header the
+  security log's feed is signed in (`X-Guard-Signature`). `Former` reads tokens made under claim and scope names a site
+  used before. Choose them before your first release: changing one later breaks whatever already holds the old one.
+  Refusals carry the error codes `Guard:Forbidden` and `Guard:TooManyRequests`.
 - **Features:** `Features` switches whole features off, and their endpoints go with them. These are `Directories`,
-  `PersonalTokens`, `OAuthApps`, `ClientRegistration`, `Merges`, `Handoff`, `SignUp`, `TwoFactor` and `DataExport`.
+  `PersonalTokens`, `OAuthApps`, `ClientRegistration`, `Merges`, `Handoff`, `SignUp`, `TwoFactor`, `DataExport`,
+  `Erasure`, `Retention`, `PrivacyNotice`, `SecurityAlerts` and `SecurityFeed`.
 - **Mail:** `Messenger:PickupFolder` gives the default messenger a folder to write mail to. For real delivery, replace
   `IGuardMessenger`.
 - **Texts:** `Texts` holds your product's name in Guard's messages (`Texts:ProductName:en`, and other languages), or
@@ -95,8 +101,8 @@ decides who may ask. Guard refuses tokens for an agent's account and audits each
 server needs the same certificate with its private key.
 
 A host can replace each of Guard's seams with its own service: `IGuardMessenger`, `IGuardLocks`, `IGuardRateLimits`,
-`IGuardEventSink`, `IGuardBroadcast`, `IGuardSiteDefaults`, `ISignUpChallenges` and `ITokenRestrictions`. Otherwise
-Guard uses its defaults.
+`IGuardEventSink`, `IGuardBroadcast`, `IGuardSiteDefaults`, `ISignUpChallenges`, `ITokenRestrictions` and
+`ISecurityFeedSender`. Otherwise Guard uses its defaults.
 
 **Behind a proxy or load balancer**, tell ASP.NET Core which proxies to trust, before Guard's middleware, so Guard sees
 each person's own address and scheme. Sign-in limits count wrong passwords per IP address; without this, every request

@@ -10,6 +10,12 @@ public sealed record ServiceAccountInput(string Username)
 
     /// <summary>An agent's account: a service account an automated actor works through, which holds no tokens.</summary>
     public bool Agent { get; init; }
+
+    /// <summary>
+    /// Its name in other languages, by language code, as a person's: <see cref="DisplayName"/>
+    /// is the name as written (English), required when these are given.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? DisplayNames { get; init; }
 }
 
 /// <summary>
@@ -44,6 +50,22 @@ public interface IServiceAccounts
     /// one or is taken.
     /// </summary>
     Task<AccountInfo> CreateAsync(ServiceAccountInput input, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Renames a service account (an agent's included): its name as written (English) and, when given, its name in other
+    /// languages, with a person's rules for each. Audited as whoever the host acts for, and
+    /// told as an account changed, so the host's copies of the name follow. Nothing happens when nothing changes. Refused
+    /// for any account that isn't a service account: people correct their own names.
+    /// </summary>
+    Task<AccountInfo> RenameAsync(Guid accountId, string displayName, IReadOnlyDictionary<string, string>? displayNames, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets or clears (null) a service account's picture: a path on the site the host serves
+    /// (<see cref="AccountPictures.IsPath"/>), never an address elsewhere. Audited as whoever the host acts for, and told
+    /// as an account changed. Nothing happens when nothing changes. Refused for any account that isn't a service account,
+    /// and for anything that isn't such a path. The host decides who may set one.
+    /// </summary>
+    Task<AccountInfo> SetPictureAsync(Guid accountId, string? picture, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Makes a token for an active service account (not an agent's, which holds none), audited as made by whoever the

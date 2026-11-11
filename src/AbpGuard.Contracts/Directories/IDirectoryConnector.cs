@@ -66,7 +66,14 @@ public sealed record DirectoryUserRecord(
     string Username,
     string? DisplayName,
     string? Email,
-    bool IsActive = true);
+    bool IsActive = true)
+{
+    /// <summary>
+    /// The person's name in other languages, by language code, from the attributes the
+    /// directory's settings name for each language; DisplayName stays the name as written. Null: the directory gives none.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? DisplayNames { get; init; }
+}
 
 /// <summary>
 /// A group as the directory has it. Kind is null for a security group, or "ou" for a group of everyone under an
@@ -87,3 +94,14 @@ public sealed record ConnectorAuthResult(bool Succeeded, string? ExternalId = nu
 }
 
 public sealed record ConnectionTestResult(bool Succeeded, string Message, int? UsersFound = null, int? GroupsFound = null);
+
+/// <summary>
+/// What a connector warns of in a directory's settings: a connection that sends passwords and people's
+/// data in the clear, certificate checks turned off. Shown when an admin saves the directory and on its page; nothing is
+/// refused, as some sites read a directory on a closed network. Optional: a connector that doesn't implement it warns of
+/// nothing.
+/// </summary>
+public interface IDirectoryConnectorWarnings
+{
+    IReadOnlyList<string> WarningsFor(IReadOnlyDictionary<string, string> settings);
+}

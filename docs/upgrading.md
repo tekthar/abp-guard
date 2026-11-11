@@ -52,7 +52,8 @@ Set these before the first start on AbpGuard, in `appsettings.json` or in code b
       "ReadScope": "toda.read",
       "SecondFactorGrantType": "urn:toda:grant-type:second-factor",
       "ProtectionPrefix": "Toda.Guard",
-      "ImportedDirectorySalt": "toda-imported-directory:"
+      "ImportedDirectorySalt": "toda-imported-directory:",
+      "FeedSignatureHeader": "X-Toda-Signature"
     }
   }
 }
@@ -70,6 +71,8 @@ What each keeps working:
 - **`ProtectionPrefix`:** authenticator apps' secrets, directories' passwords and links already mailed stay readable.
   Keep `SetApplicationName(...)` on the Data Protection builder as it was too.
 - **`ImportedDirectorySalt`:** imported directories keep the ids they were given.
+- **`FeedSignatureHeader`:** a receiver of the security log's feed set up under the old name keeps finding the
+  signature where it looks for it (from 0.3.0, for a host whose own Guard had the feed before).
 - **`AdminsGroupName`, `Seed`, `Texts:ProductName`:** names Guard shows and the product named in its mails. The groups
   themselves are found by id, so a site already seeded keeps its rights either way.
 

@@ -122,13 +122,13 @@ public static class AppPrincipals
 }
 
 /// <summary>
-/// Dynamic client registration (RFC 7591, M7): MCP clients register themselves before they ask a person to allow them.
-/// Each is a public client that must use PKCE; site admins see and remove them. A site turns it off with
-/// <c>Guard:Oidc:ClientRegistration</c> false.
+/// Dynamic client registration (RFC 7591): MCP clients register themselves before they ask a person to allow them.
+/// Each is a public client that must use PKCE; site admins see and remove them. Off on a new site until an admin turns
+/// it on in Administration › Security; <c>Guard:Oidc:ClientRegistration</c> false keeps it off.
 /// </summary>
 [ApiExplorerSettings(IgnoreApi = true)]
 [GuardFeature(nameof(GuardFeatures.ClientRegistration))]
-public class ClientRegistrationController(OAuthApps apps, IConfiguration configuration) : GuardControllerBase
+public class ClientRegistrationController(OAuthApps apps, IConfiguration configuration, GuardDb guardDb) : GuardControllerBase
 {
     [HttpPost("~/connect/register")]
     [AllowAnonymous]
@@ -137,7 +137,10 @@ public class ClientRegistrationController(OAuthApps apps, IConfiguration configu
 #pragma warning restore S4502
     public async Task<IActionResult> Register([FromBody] ClientRegistrationInput input, CancellationToken cancellationToken)
     {
-        if (!configuration.GetValue("Guard:Oidc:ClientRegistration", true))
+        bool allowed = configuration.GetValue("Guard:Oidc:ClientRegistration", true) && await guardDb.RunAsync(db =>
+            db.SecuritySettings.AsNoTracking().Where(s => s.Id == SecuritySettings.SingletonId).Select(s => s.AppsMayRegister).FirstOrDefaultAsync(cancellationToken),
+            cancellationToken: cancellationToken);
+        if (!allowed)
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "access_denied", error_description = "Apps can't register themselves on this site: ask a site admin." });
         }

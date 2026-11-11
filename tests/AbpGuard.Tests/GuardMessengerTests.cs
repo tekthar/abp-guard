@@ -9,7 +9,7 @@ public class GuardMessengerTests
     [Fact]
     public void Every_kind_has_its_texts_in_English_and_Arabic_with_the_values_it_names()
     {
-        string[] kinds = [GuardMessageKinds.SignUpVerify, GuardMessageKinds.PasswordReset, GuardMessageKinds.AddressVerify,
+        string[] kinds = [GuardMessageKinds.SignUpVerify, GuardMessageKinds.PasswordReset, GuardMessageKinds.AddressVerify, GuardMessageKinds.AddressChanged, GuardMessageKinds.SecurityAlert,
             GuardMessageKinds.SecondFactorCode, GuardMessageKinds.SecondFactorCodeMessage];
         Assert.Equal(kinds.Order(), GuardMessageTemplates.All.Select(t => t.Key).Order());
         foreach (GuardMessageTemplate template in GuardMessageTemplates.All)

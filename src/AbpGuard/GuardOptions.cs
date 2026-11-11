@@ -44,6 +44,9 @@ public sealed class GuardOptions
     /// <summary>The default messenger's pickup folder (<see cref="IGuardMessenger"/>).</summary>
     public GuardMessengerOptions Messenger { get; set; } = new();
 
+    /// <summary>What alerts site admins of a possible breach, and how much makes a burst.</summary>
+    public Services.SecurityAlertOptions SecurityAlerts { get; set; } = new();
+
     /// <summary>The product's name in Guard's messages, and a host's own templates for them.</summary>
     public GuardTextOptions Texts { get; set; } = new();
 
@@ -138,6 +141,9 @@ public sealed class GuardPageOptions
     public string AddressVerify { get; set; } = "/emails/verify";
 
     public string Consent { get; set; } = "/oauth/consent";
+
+    /// <summary>The security log's page for site admins, which a security alert links to.</summary>
+    public string SecurityLog { get; set; } = "/admin/security";
 }
 
 /// <summary>

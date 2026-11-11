@@ -33,7 +33,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
             if (!string.IsNullOrWhiteSpace(search))
             {
                 string s = GuardConstants.Normalize(search), like = SqlLike.Containing(s);
-                query = query.Where(a => a.NormalizedUsername.Contains(s) || EF.Functions.ILike(a.DisplayName, like) || (a.Email != null && EF.Functions.ILike(a.Email, like)));
+                query = query.Where(a => a.NormalizedUsername.Contains(s) || EF.Functions.ILike(a.DisplayName, like) || (a.OtherNames != null && EF.Functions.ILike(a.OtherNames, like)) || (a.Email != null && EF.Functions.ILike(a.Email, like)));
             }
 
             if (Enum.TryParse(status, ignoreCase: true, out AccountStatus parsed))
@@ -92,6 +92,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
             throw new UserFriendlyException(Usernames.Rule);
         }
 
+        Usernames.EnsureNotReserved(input.Username, input.DisplayName);
         if (string.IsNullOrEmpty(input.Password) || input.Password.Length < 10)
         {
             throw new UserFriendlyException("Passwords need at least 10 characters.");
@@ -342,6 +343,32 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
         }
     }
 
+    /// <summary>Corrects an internal account's display name; a directory's account is corrected in its directory.</summary>
+    [HttpPut("{id:guid}/name")]
+    [StepUp]
+    public async Task<AccountNameDto> Rename(Guid id, [FromBody] AccountNameInput input, [FromServices] AccountCorrections corrections, CancellationToken cancellationToken)
+    {
+        Account account = await AccountAsync(id, cancellationToken);
+        Ensure(await AbilityAsync(cancellationToken), "update", account);
+        AccountChangedEto changed = await corrections.RenameAsync(id, input.DisplayName, input.DisplayNames, cancellationToken);
+        await audit.WriteAsync(SecurityAuditTypes.AccountRenamed, Target(account), new { before = changed.OldDisplayName, after = changed.NewDisplayName, names = input.DisplayNames }, cancellationToken);
+        await PublishAsync([changed]);
+        return new AccountNameDto(changed.NewDisplayName!) { DisplayNames = (await AccountAsync(id, cancellationToken)).DisplayNames };
+    }
+
+    /// <summary>One of an internal account's confirmed addresses becomes its primary; the one before is told.</summary>
+    [HttpPost("{id:guid}/emails/{emailId:guid}/primary")]
+    [StepUp]
+    public async Task<AccountEmailsDto> SetPrimary(Guid id, Guid emailId, [FromServices] AccountCorrections corrections, CancellationToken cancellationToken)
+    {
+        Account account = await AccountAsync(id, cancellationToken);
+        Ensure(await AbilityAsync(cancellationToken), "update", account);
+        AccountChangedEto changed = await corrections.SetPrimaryAsync(id, emailId, cancellationToken);
+        await audit.WriteAsync(SecurityAuditTypes.PrimaryAddressChanged, Target(account), new { before = changed.OldEmail, after = changed.NewEmail }, cancellationToken);
+        await PublishAsync([changed]);
+        return await emails.ListAsync(id, cancellationToken);
+    }
+
     private static AuditTarget Target(Account account) => new("Account", account.Id, account.Username);
 
     private Task<Account> AccountAsync(Guid id, CancellationToken cancellationToken) => guardDb.RunAsync(async db =>
@@ -391,6 +418,54 @@ public class MergesController(AccountMergeService merges, GuardDb guardDb) : Gua
         foreach (Account account in accounts)
         {
             Ensure(ability, "merge", account);
+        }
+    }
+}
+
+public sealed record AccountNameDto(string DisplayName)
+{
+    /// <summary>The person's name in other languages, as saved.</summary>
+    public Dictionary<string, string> DisplayNames { get; init; } = [];
+}
+
+/// <summary>
+/// A person corrects their own account (PDPL's right to correction): their display name, and which of
+/// their confirmed addresses is their primary. Only an account of the internal directory; each asks for the password
+/// again, is limited as self-service is, and goes in the security log. Sign-in keeps taking the username.
+/// </summary>
+[Route("api/guard")]
+[Authorize]
+public class MyAccountController(AccountCorrections corrections, AccountEmailService emails, SecurityLog audit, SelfServiceLimiter limiter) : GuardControllerBase
+{
+    [HttpPut("me/name")]
+    [StepUp]
+    public async Task<AccountNameDto> Rename([FromBody] AccountNameInput input, CancellationToken cancellationToken)
+    {
+        await LimitAsync(cancellationToken);
+        AccountChangedEto changed = await corrections.RenameAsync(CurrentAccountId, input.DisplayName, input.DisplayNames, cancellationToken);
+        await audit.WriteAsync(SecurityAuditTypes.AccountRenamed, new AuditTarget("Account", changed.AccountId, changed.Username),
+            new { before = changed.OldDisplayName, after = changed.NewDisplayName, names = input.DisplayNames }, cancellationToken);
+        await PublishAsync([changed]);
+        return new AccountNameDto(changed.NewDisplayName!) { DisplayNames = input.DisplayNames ?? [] };
+    }
+
+    [HttpPost("me/emails/{emailId:guid}/primary")]
+    [StepUp]
+    public async Task<AccountEmailsDto> SetPrimary(Guid emailId, CancellationToken cancellationToken)
+    {
+        await LimitAsync(cancellationToken);
+        AccountChangedEto changed = await corrections.SetPrimaryAsync(CurrentAccountId, emailId, cancellationToken);
+        await audit.WriteAsync(SecurityAuditTypes.PrimaryAddressChanged, new AuditTarget("Account", changed.AccountId, changed.Username),
+            new { before = changed.OldEmail, after = changed.NewEmail }, cancellationToken);
+        await PublishAsync([changed]);
+        return await emails.ListAsync(CurrentAccountId, cancellationToken);
+    }
+
+    private async Task LimitAsync(CancellationToken cancellationToken)
+    {
+        if (!await limiter.AllowAsync("correction", ClientIp, null, cancellationToken))
+        {
+            throw new UserFriendlyException("Too many tries. Wait a while and try again.", GuardErrorCodes.TooManyRequests);
         }
     }
 }

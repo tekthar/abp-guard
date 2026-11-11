@@ -16,7 +16,7 @@ namespace AbpGuard.Services.Privacy;
 public sealed class GuardPersonalDataExporter(GuardDb guardDb, OAuthApps apps, AccountSessions sessions) : IPersonalDataExporter, ITransientDependency
 {
     public IReadOnlyList<string> Stores { get; } =
-        ["guard.accounts", "guard.access", "guard.sign-in-secrets", "guard.sessions", "guard.security-log", "guard.privacy-record"];
+        ["guard.accounts", "guard.access", "guard.sign-in-secrets", "guard.sessions", "guard.security-log", "guard.privacy-record", "guard.erasures", "guard.consent"];
 
     public async Task ExportAsync(IPersonalDataExport export, CancellationToken cancellationToken = default)
     {
@@ -60,6 +60,7 @@ public sealed class GuardPersonalDataExporter(GuardDb guardDb, OAuthApps apps, A
                 {
                     ["username"] = account.Username,
                     ["displayName"] = account.DisplayName,
+                    ["displayNames"] = System.Text.Json.JsonSerializer.SerializeToNode(account.DisplayNames),
                     ["email"] = account.Email,
                     ["mailTo"] = account.MailTo,
                     ["status"] = account.Status.ToString(),
@@ -80,6 +81,7 @@ public sealed class GuardPersonalDataExporter(GuardDb guardDb, OAuthApps apps, A
                 ["externalId"] = r.ExternalId,
                 ["username"] = r.Username,
                 ["displayName"] = r.DisplayName,
+                ["displayNames"] = r.DisplayNames is null ? null : System.Text.Json.JsonSerializer.SerializeToNode(r.DisplayNames),
                 ["email"] = r.Email,
                 ["active"] = r.IsActive,
                 ["signedUpAndUnconfirmedSince"] = r.PendingSince,
@@ -139,6 +141,20 @@ public sealed class GuardPersonalDataExporter(GuardDb guardDb, OAuthApps apps, A
                 .Select(r => new JsonObject { ["store"] = r.StoreKey, ["recordedAt"] = r.UpdatedAt }),
                 .. (await db.PrivacySettings.AsNoTracking().Where(s => s.UpdatedBy == id).ToListAsync(ct))
                 .Select(s => new JsonObject { ["store"] = "the site's controller, officer and destinations", ["recordedAt"] = s.UpdatedAt })],
+            // The notices they accepted (as an account; a portal's by their address is found in an export by address too), and consent withdrawn.
+            ["guard.consent/notices-you-accepted"] = [.. (await db.PrivacyAcceptances.AsNoTracking().Where(a => a.AccountId == id).OrderBy(a => a.At).ToListAsync(ct))
+                .Select(a => new JsonObject { ["version"] = a.Version, ["where"] = a.Where, ["at"] = a.At })],
+            ["guard.consent/consent-you-withdrew"] = [.. (await db.ConsentWithdrawals.AsNoTracking().Where(w => w.AccountId == id).OrderBy(w => w.At).ToListAsync(ct))
+                .Select(w => new JsonObject { ["store"] = w.StoreKey, ["at"] = w.At, ["handledAt"] = w.HandledAt })],
+            // Their requests to be erased; a legal hold on them is the site's to tell them of, not the export's.
+            ["guard.erasures/requests"] = [.. (await db.Erasures.AsNoTracking().Where(e => e.AccountId == id).OrderBy(e => e.CreatedAt).ToListAsync(ct))
+                .Select(e => new JsonObject
+                {
+                    ["askedAt"] = e.CreatedAt,
+                    ["state"] = e.State,
+                    ["reason"] = e.Reason,
+                    ["declinedBecause"] = e.DeclinedReason,
+                })],
         };
     }
 }

@@ -12,7 +12,8 @@ namespace AbpGuard.Controllers;
 /// on its own: [AllowAnonymous] on a controller would override any admin policy on its actions.
 /// </summary>
 [Route("api/guard")]
-public class SelfServiceController(SelfService self, SelfServiceLimiter limiter, ISignUpChallenges challenges, TestAccounts testAccounts)
+public class SelfServiceController(SelfService self, SelfServiceLimiter limiter, ISignUpChallenges challenges, TestAccounts testAccounts,
+    Services.Privacy.PrivacyNotices notices, Microsoft.Extensions.Options.IOptions<GuardOptions> options)
     : GuardControllerBase
 {
     /// <summary>The accounts a test site shows on its sign-in page, with their passwords; none on any other site.</summary>
@@ -38,7 +39,19 @@ public class SelfServiceController(SelfService self, SelfServiceLimiter limiter,
             throw new UserFriendlyException("Answer the question that shows you're a person.");
         }
 
+        // The privacy notice, while one is published: the form shows it, and the version shown is the one accepted.
+        bool notice = options.Value.Features.PrivacyNotice;
+        if (notice)
+        {
+            await notices.EnsureAcceptedAsync(input.NoticeVersion, cancellationToken);
+        }
+
         await self.SignUpAsync(input, cancellationToken);
+        if (notice && input.NoticeVersion is { } version)
+        {
+            await notices.RecordAsync(null, input.Email, version, NoticeAcceptedWhere.SignUp, ClientIp, cancellationToken);
+        }
+
         return NoContent();
     }
 

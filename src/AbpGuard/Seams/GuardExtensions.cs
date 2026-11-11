@@ -14,6 +14,15 @@ public interface IGuardExtensions
     /// past it. A plugin's types must not outlive the call, or the plugin can't unload when it's disabled or upgraded.
     /// </summary>
     IGuardLease<T> Lease<T>(IServiceProvider services) where T : class;
+
+    /// <summary>
+    /// Whether an enabled plugin is running now: a host may hold one back (a safe mode, a plugin that failed to load), so
+    /// it's enabled but leases nothing. An erasure waits for it rather than finish without its stores.
+    /// </summary>
+    bool IsRunning(string pluginKey) => true;
+
+    /// <summary>Why the host holds every plugin back now (a safe mode), or null: an erasure doesn't start or resume meanwhile.</summary>
+    string? PluginsHeldBecause => null;
 }
 
 /// <summary>The extensions leased: the host's own with no plugin key, then each plugin's with its key.</summary>

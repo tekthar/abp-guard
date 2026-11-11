@@ -39,6 +39,20 @@ public sealed class GuardFeatures
     /// </summary>
     public bool DataExport { get; set; } = true;
 
+    /// <summary>Erasing a person (PDPL): erasure requests, an admin's erasure, and legal holds.</summary>
+    public bool Erasure { get; set; } = true;
+
+    /// <summary>Retention periods and their daily sweep.</summary>
+    public bool Retention { get; set; } = true;
+
+    /// <summary>The privacy notice, its acceptance and consent withdrawn.</summary>
+    public bool PrivacyNotice { get; set; } = true;
+
+    /// <summary>Alerts to site admins of a possible breach, and the security log's feed.</summary>
+    public bool SecurityAlerts { get; set; } = true;
+
+    public bool SecurityFeed { get; set; } = true;
+
     /// <summary>Whether the feature of this name is on; an unknown name is.</summary>
     public bool IsOn(string feature) =>
         typeof(GuardFeatures).GetProperty(feature, BindingFlags.Public | BindingFlags.Instance)?.GetValue(this) is not false;

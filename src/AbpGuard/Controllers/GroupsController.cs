@@ -105,10 +105,11 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
 
     /// <summary>A group to make in Guard: standard, or an organization with attributes and email domains.</summary>
     public sealed record CreateGroupInput(string Name, string? Description, Guid? DirectoryId, string? Kind = null, Dictionary<string, string>? Attributes = null,
-        List<string>? EmailDomains = null);
+        List<string>? EmailDomains = null, Dictionary<string, string>? Names = null);
 
     /// <summary>What can change on a group made in Guard: its name and description, and an organization's attributes and domains.</summary>
-    public sealed record UpdateGroupInput(string Name, string? Description, Dictionary<string, string>? Attributes = null, List<string>? EmailDomains = null);
+    public sealed record UpdateGroupInput(string Name, string? Description, Dictionary<string, string>? Attributes = null, List<string>? EmailDomains = null,
+        Dictionary<string, string>? Names = null);
 
     [HttpPost]
     [StepUp]
@@ -149,6 +150,7 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
                 Kind = kind,
                 Attributes = attributes,
                 EmailDomains = domains,
+                Names = GuardNamesByLanguage.Clean(input.Names),
             };
             db.Groups.Add(group);
             audit.Add(db, SecurityAuditTypes.GroupCreated, Target(group), new { kind, emailDomains = domains });
@@ -195,6 +197,10 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
             List<string> oldDomains = [.. group.EmailDomains];
             group.SetName(input.Name);
             group.Description = input.Description?.Trim();
+            if (input.Names is not null)
+            {
+                group.Names = GuardNamesByLanguage.Clean(input.Names);
+            }
             if (group.Kind == GroupKinds.Organization)
             {
                 (group.Attributes, group.EmailDomains) = Organization(input.Attributes, input.EmailDomains);
@@ -438,7 +444,7 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
                 g.Id, g.Name, g.Description, g.DirectoryId, directories.GetValueOrDefault(g.DirectoryId, "?"), g.IsLocal, IsWritable(g),
                 g.Kind == GroupKinds.Directory ? owned.GetValueOrDefault(g.DirectoryId) : counts.Where(c => c.GroupId == g.Id && !c.IsGroup).Sum(c => c.Count),
                 counts.Where(c => c.GroupId == g.Id && c.IsGroup).Sum(c => c.Count),
-                g.Kind, g.Computed, g.Attributes, g.EmailDomains, g.TwoFactor))
+                g.Kind, g.Computed, g.Attributes, g.EmailDomains, g.TwoFactor) { Names = g.Names })
             .ToList();
     }
 }

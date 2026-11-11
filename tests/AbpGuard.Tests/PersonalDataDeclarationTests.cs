@@ -142,8 +142,38 @@ public class PersonalDataDeclarationTests
     [InlineData("", false)]
     public void Kept_says_how_long(string kept, bool valid) => Assert.Equal(valid, PersonalDataKept.IsValid(kept));
 
+    /// <summary>As a plugin host names it: an app ID's dot and dashes written out, one too long for Postgres hashed.</summary>
+    [Theory]
+    [InlineData("guard-ldap", "plg_guard_ldap")]
+    [InlineData("acme.issue-import", "plg_acme__issue_import")]
+    [InlineData("acme.x-y", "plg_acme__x_y")]
+    [InlineData("acme.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "plg_acme__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")]
+    [InlineData("acme.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "plh_acme__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_4c18cb4d855b")]
+    public void The_schema_is_named_as_the_sdk_names_it(string plugin, string schema) => Assert.Equal(schema, PersonalDataDeclaration.SchemaOf(plugin));
+
     [Fact]
-    public void The_schema_is_named_as_the_sdk_names_it() => Assert.Equal("plg_guard_ldap", PersonalDataDeclaration.SchemaOf("guard-ldap"));
+    public void A_store_s_key_is_64_at_most()
+    {
+        string key = new('s', PersonalDataDeclaration.MaxStoreKeyLength + 1);
+        PluginPersonalData read = Read($$"""
+            [{ "key": "{{key}}", "name": "Long", "purpose": "Too long a key", "tables": ["people"], "about": "both", "kinds": ["identity"],
+               "kept": "forever" }]
+            """);
+
+        Assert.Empty(read.Stores);
+        Assert.Contains(read.Problems, p => p.Contains("at most 64", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_host_may_give_the_schema_it_kept()
+    {
+        PluginPersonalData read = PersonalDataDeclaration.Read("acme.issue-import", "plg_issue_import", JsonDocument.Parse("""
+            [{ "none": true, "tables": ["backup_stages"], "why": "how far an import got" }]
+            """).RootElement.Clone());
+
+        Assert.Empty(read.Problems);
+        Assert.Equal("plg_issue_import.backup_stages", Assert.Single(read.NotPersonal).Table);
+    }
 
     [Fact]
     public void The_json_schema_is_json() => Assert.Equal("guard.personal-data@1", JsonDocument.Parse(PersonalDataDeclaration.JsonSchema).RootElement.GetProperty("title").GetString());

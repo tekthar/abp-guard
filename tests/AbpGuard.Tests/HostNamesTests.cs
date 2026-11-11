@@ -18,8 +18,8 @@ public class HostNamesTests
         GuardOptions options = new();
         Assert.Equal(("guard_session", "guard_csrf", "guard_embedded", "NEXT_LOCALE"),
             (options.Cookies.Session, options.Cookies.Csrf, options.Cookies.Embedded, options.Cookies.Language));
-        Assert.Equal(("/signup/verify", "/reset-password", "/emails/verify", "/oauth/consent"),
-            (options.Pages.SignUpVerify, options.Pages.PasswordReset, options.Pages.AddressVerify, options.Pages.Consent));
+        Assert.Equal(("/signup/verify", "/reset-password", "/emails/verify", "/oauth/consent", "/admin/security"),
+            (options.Pages.SignUpVerify, options.Pages.PasswordReset, options.Pages.AddressVerify, options.Pages.Consent, options.Pages.SecurityLog));
         Assert.Equal((GuardOidc.WebClientId, GuardOidc.MobileClientId), (options.Clients.Web, options.Clients.Mobile));
         Assert.Equal(("web", "mobile", "api", "admins", "users"), (options.Clients.Web, options.Clients.Mobile, options.ApiScope, options.AdminsGroupName, options.Seed.UsersGroupName));
         Assert.Equal(["api", "offline_access"], Services.OAuthAgents.GrantedScopes(options.ApiScope, offline: true).ToArray());
@@ -31,6 +31,9 @@ public class HostNamesTests
         Assert.Equal(("guard_session", "guard_token", "guard_token_tool", "guard_app_", "guard_cs_"),
             (names.SessionClaim, names.TokenClaim, names.TokenToolClaim, names.AppIdPrefix, names.AppSecretPrefix));
         Assert.Equal(("Guard:Forbidden", "Guard:TooManyRequests"), (GuardErrorCodes.Forbidden, GuardErrorCodes.TooManyRequests));
+        Assert.Equal("X-Guard-Signature", names.FeedSignatureHeader);
+        Assert.Equal(SecurityFeed.SignatureHeader, names.FeedSignatureHeader);
+        Assert.Null(names.Former);
     }
 
     [Fact]
@@ -47,7 +50,9 @@ public class HostNamesTests
             ["Guard:Names:AppIdPrefix"] = "shop_app_", ["Guard:Names:AppSecretPrefix"] = "shop_cs_", ["Guard:Names:AppKindProperty"] = "shop_kind",
             ["Guard:Names:AppAccessProperty"] = "shop_access", ["Guard:Names:ReadScope"] = "shop.read",
             ["Guard:Names:SecondFactorGrantType"] = "urn:shop:grant-type:second-factor", ["Guard:Names:ProtectionPrefix"] = "Shop.Guard",
-            ["Guard:Names:ImportedDirectorySalt"] = "shop-imported-directory:",
+            ["Guard:Names:ImportedDirectorySalt"] = "shop-imported-directory:", ["Guard:Names:FeedSignatureHeader"] = "X-Shop-Signature",
+            ["Guard:Names:Former:TokenClaim"] = "old_token", ["Guard:Names:Former:Scopes:old.api"] = "shop.api",
+            ["Guard:Pages:SecurityLog"] = "/{lang}/admin/security-log",
         }).Build();
         GuardOptions options = new();
         configuration.GetSection(GuardOptions.Section).Bind(options);
@@ -65,6 +70,9 @@ public class HostNamesTests
             (names.SecondFactorGrantType, names.Purpose("SecondFactor.v1"), names.ImportedDirectorySalt));
         Assert.True(names.IsPersonalToken("shop_pat_abc"));
         Assert.False(names.IsPersonalToken("guard_pat_abc"));
+        Assert.Equal(("X-Shop-Signature", "/{lang}/admin/security-log"), (names.FeedSignatureHeader, options.Pages.SecurityLog));
+        Assert.Equal(("old_token", "shop.api"), (names.Former?.TokenClaim, names.Former?.Scopes["old.api"]));
+        Assert.True(SecurityFeed.Sign("secret", [], header: names.FeedSignatureHeader).ContainsKey("X-Shop-Signature"));
     }
 
     [Fact]

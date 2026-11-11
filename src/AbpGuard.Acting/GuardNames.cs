@@ -75,6 +75,87 @@ public sealed class GuardNames
     /// <summary>What an imported directory's id is derived with, beside its source's name.</summary>
     public string ImportedDirectorySalt { get; set; } = "guard-imported-directory:";
 
+    /// <summary>
+    /// The header the security log's feed signs each batch in (<c>t={unix seconds},v1={hex HMAC-SHA256 of "t.body"}</c>):
+    /// the name its receiver checks.
+    /// </summary>
+    public string FeedSignatureHeader { get; set; } = "X-Guard-Signature";
+
     /// <summary>A Data Protection purpose under <see cref="ProtectionPrefix"/>.</summary>
     public string Purpose(string name) => $"{ProtectionPrefix}.{name}";
+
+    /// <summary>
+    /// The claim and scope names a site gave tokens before it renamed them, if it did: a token made under them is read as
+    /// if made under today's (<see cref="Current"/>), so it keeps its limits until it expires, and a refresh issues today's.
+    /// </summary>
+    public FormerTokenNames? Former { get; set; }
+
+    private static readonly System.Text.RegularExpressions.Regex LimitClaim = new("^[a-z0-9]+_(session|mode|token(_access|_project|_tool)?)$", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1));
+    private static readonly HashSet<string> OtherTokenClaims = ["id_token", "access_token", "refresh_token"];
+
+    /// <summary>
+    /// A token's principal under today's names: claims carried under a <see cref="Former"/> name are renamed, and so are
+    /// former scopes in claims of <paramref name="scopeClaimType"/>. Null when it carries a session, mode, token or limit
+    /// claim under a name that is neither today's nor a former one: such a token is refused, never read as unlimited, and an
+    /// impersonation never as the person it stands for.
+    /// </summary>
+    public System.Security.Claims.ClaimsPrincipal? Current(System.Security.Claims.ClaimsPrincipal principal, string scopeClaimType)
+    {
+        string[] today = [SessionClaim, ModeClaim, TokenClaim, TokenAccessClaim, TokenProjectClaim, TokenToolClaim];
+        Dictionary<string, string> renamed = Former is null ? [] : new Dictionary<string, string?>
+        {
+            [Former.SessionClaim ?? ""] = SessionClaim,
+            [Former.ModeClaim ?? ""] = ModeClaim,
+            [Former.TokenClaim ?? ""] = TokenClaim,
+            [Former.TokenAccessClaim ?? ""] = TokenAccessClaim,
+            [Former.TokenProjectClaim ?? ""] = TokenProjectClaim,
+            [Former.TokenToolClaim ?? ""] = TokenToolClaim,
+        }.Where(p => p.Key.Length > 0 && p.Key != p.Value).ToDictionary(p => p.Key, p => p.Value!);
+        IReadOnlyDictionary<string, string> scopes = Former?.Scopes ?? [];
+        bool changed = false;
+        System.Security.Claims.ClaimsPrincipal current = new();
+        foreach (System.Security.Claims.ClaimsIdentity identity in principal.Identities)
+        {
+            System.Security.Claims.ClaimsIdentity copy = new(identity.AuthenticationType, identity.NameClaimType, identity.RoleClaimType);
+            copy.Actor = identity.Actor;
+            copy.Label = identity.Label;
+            copy.BootstrapContext = identity.BootstrapContext;
+            foreach (System.Security.Claims.Claim claim in identity.Claims)
+            {
+                string type = renamed.GetValueOrDefault(claim.Type, claim.Type);
+                string value = claim.Type == scopeClaimType ? scopes.GetValueOrDefault(claim.Value, claim.Value) : claim.Value;
+                if (LimitClaim.IsMatch(type) && !today.Contains(type) && !OtherTokenClaims.Contains(type))
+                {
+                    return null;
+                }
+
+                changed |= type != claim.Type || value != claim.Value;
+                System.Security.Claims.Claim renamedClaim = new(type, value, claim.ValueType, claim.Issuer, claim.OriginalIssuer);
+                foreach ((string key, string property) in claim.Properties)
+                {
+                    renamedClaim.Properties[key] = property;
+                }
+
+                copy.AddClaim(renamedClaim);
+            }
+
+            current.AddIdentity(copy);
+        }
+
+        return changed ? current : principal;
+    }
+}
+
+/// <summary>The claim and scope names a site's tokens carried before a rename (<see cref="GuardNames.Former"/>).</summary>
+public sealed class FormerTokenNames
+{
+    public string? SessionClaim { get; set; }
+    public string? ModeClaim { get; set; }
+    public string? TokenClaim { get; set; }
+    public string? TokenAccessClaim { get; set; }
+    public string? TokenProjectClaim { get; set; }
+    public string? TokenToolClaim { get; set; }
+
+    /// <summary>Each former scope and today's (<c>old.api</c> and <c>api</c>, say).</summary>
+    public Dictionary<string, string> Scopes { get; set; } = [];
 }

@@ -32,6 +32,13 @@ public static class SecurityAuditTypes
     public const string AddressAdded = "account.address.added";
     public const string AddressRemoved = "account.address.removed";
     public const string MailToChanged = "account.address.mail-to";
+
+    /// <summary>A correction: an internal account's display name, or which confirmed address is its primary.</summary>
+    public const string AccountRenamed = "account.renamed";
+
+    /// <summary>A service account's picture set or cleared.</summary>
+    public const string AccountPictureChanged = "account.picture";
+    public const string PrimaryAddressChanged = "account.address.primary";
     public const string SignUpChanged = "settings.signup";
     public const string RetentionChanged = "settings.audit";
     public const string StepUpChanged = "settings.step-up";
@@ -85,6 +92,37 @@ public static class SecurityAuditTypes
     /// cut off, by the client or an error) after some of it may have gone out.
     /// </summary>
     public const string PrivacyExportEnded = "privacy.export.ended";
+
+    /// <summary>
+    /// Erasure: a person asked, an admin declined, an account or an address was erased (or the erasure
+    /// stopped at a store and was resumed, or went on without a plugin's store), and legal holds put on and released.
+    /// </summary>
+    public const string ErasureRequested = "privacy.erasure.requested";
+    public const string ErasureDeclined = "privacy.erasure.declined";
+    public const string AccountErased = "privacy.erasure.account";
+    public const string AddressErased = "privacy.erasure.address";
+    public const string ErasureResumed = "privacy.erasure.resumed";
+    public const string ErasureStoreSkipped = "privacy.erasure.store-skipped";
+    public const string LegalHoldAdded = "privacy.hold.added";
+    public const string LegalHoldReleased = "privacy.hold.released";
+
+    /// <summary>Retention: its periods set or confirmed, and a sweep with how many rows each rule removed.</summary>
+    public const string Retention = "settings.retention";
+    public const string RetentionSwept = "privacy.retention.swept";
+
+    /// <summary>The privacy notice: a version published, accepted by a person signed in; consent withdrawn, and handled.</summary>
+    public const string NoticePublished = "privacy.notice.published";
+    public const string NoticeAccepted = "privacy.notice.accepted";
+    public const string ConsentWithdrawn = "privacy.consent.withdrawn";
+    public const string ConsentHandled = "privacy.consent.handled";
+
+    /// <summary>Whether apps may register themselves, turned on or off.</summary>
+    public const string AppsMayRegister = "settings.apps-register";
+
+    /// <summary>Breaches: the log downloaded, its feed set, an alert told to site admins.</summary>
+    public const string LogExported = "security.log.exported";
+    public const string FeedChanged = "settings.security-feed";
+    public const string AlertSent = "security.alert.sent";
 }
 
 /// <summary>

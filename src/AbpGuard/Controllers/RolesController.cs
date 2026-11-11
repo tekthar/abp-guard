@@ -20,9 +20,15 @@ public class RolesController(GuardDb guardDb, RoleCatalog roleCatalog, SecurityL
 {
     public sealed record GrantDto(Guid Id, string PrincipalType, Guid PrincipalId, string PrincipalName, JsonNode? Scope, DateTime? ValidUntil, DateTime CreatedAt);
 
-    public sealed record RoleDto(Guid Id, string Key, string Name, string? Description, bool IsSystem, List<JsonNode?> Rules, List<GrantDto> Grants);
+    public sealed record RoleDto(Guid Id, string Key, string Name, string? Description, bool IsSystem, List<JsonNode?> Rules, List<GrantDto> Grants)
+    {
+        /// <summary>Its name and description in other languages; Name and Description are the English ones.</summary>
+        public Dictionary<string, string> Names { get; init; } = [];
+        public Dictionary<string, string> Descriptions { get; init; } = [];
+    }
 
-    public sealed record CreateRoleInput(string Key, string Name, string? Description, List<JsonObject> Rules);
+    public sealed record CreateRoleInput(string Key, string Name, string? Description, List<JsonObject> Rules, Dictionary<string, string>? Names = null,
+        Dictionary<string, string>? Descriptions = null);
 
     public sealed record GrantInput(string PrincipalType, [property: JsonRequired] Guid PrincipalId, JsonObject? Scope, DateTime? ValidUntil);
 
@@ -48,7 +54,7 @@ public class RolesController(GuardDb guardDb, RoleCatalog roleCatalog, SecurityL
                 rules[r.Id].Select(x => JsonNode.Parse(x.Json)).ToList(),
                 grants.Where(g => g.RoleId == r.Id)
                     .Select(g => new GrantDto(g.Id, g.PrincipalType.ToString(), g.PrincipalId, names.GetValueOrDefault(g.PrincipalId, "(removed)"), JsonNode.Parse(g.ScopeJson), g.ValidUntil, g.CreatedAt))
-                    .ToList()))
+                    .ToList()) { Names = r.Names, Descriptions = r.Descriptions })
             .ToList();
     }, cancellationToken: cancellationToken);
 
@@ -90,7 +96,12 @@ public class RolesController(GuardDb guardDb, RoleCatalog roleCatalog, SecurityL
                 throw new UserFriendlyException($"A role with key '{input.Key}' already exists.");
             }
 
-            Role role = new(Guid.NewGuid(), input.Key, input.Name.Trim(), isSystem: false) { Description = input.Description };
+            Role role = new(Guid.NewGuid(), input.Key, input.Name.Trim(), isSystem: false)
+            {
+                Description = input.Description,
+                Names = GuardNamesByLanguage.Clean(input.Names, 200),
+                Descriptions = GuardNamesByLanguage.Clean(input.Descriptions, 2000),
+            };
             db.Roles.Add(role);
             for (int i = 0; i < input.Rules.Count; i++)
             {

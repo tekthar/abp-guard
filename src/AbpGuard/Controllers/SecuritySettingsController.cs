@@ -17,10 +17,11 @@ namespace AbpGuard.Controllers;
 /// token may live.
 /// </summary>
 public sealed record SecuritySettingsDto(int RetentionDays, int MinRetentionDays, int MaxRetentionDays, int StepUpMinutes, int MinStepUpMinutes, int MaxStepUpMinutes,
-    int TokenMaxDays, int MinTokenMaxDays, int MaxTokenMaxDays);
+    int TokenMaxDays, int MinTokenMaxDays, int MaxTokenMaxDays, bool AppsMayRegister = false);
 
 /// <summary>The settings to save; TokenMaxDays left out keeps what's saved.</summary>
-public sealed record SecuritySettingsInput([property: JsonRequired] int RetentionDays, [property: JsonRequired] int StepUpMinutes, int? TokenMaxDays = null);
+public sealed record SecuritySettingsInput([property: JsonRequired] int RetentionDays, [property: JsonRequired] int StepUpMinutes, int? TokenMaxDays = null,
+    bool? AppsMayRegister = null);
 
 /// <summary>
 /// Security settings, for site admins. Changing them is sensitive (a shorter retention removes older events, a longer
@@ -69,6 +70,12 @@ public class SecuritySettingsController(GuardDb guardDb, SecurityLog audit) : Gu
                 settings.RetentionDays = input.RetentionDays;
             }
 
+            if (input.AppsMayRegister is { } register && settings.AppsMayRegister != register)
+            {
+                audit.Add(db, SecurityAuditTypes.AppsMayRegister, null, new { appsMayRegister = new { before = settings.AppsMayRegister, after = register } });
+                settings.AppsMayRegister = register;
+            }
+
             if (settings.StepUpMinutes != input.StepUpMinutes)
             {
                 audit.Add(db, SecurityAuditTypes.StepUpChanged, null, new { stepUpMinutes = new { before = settings.StepUpMinutes, after = input.StepUpMinutes } });
@@ -97,7 +104,7 @@ public class SecuritySettingsController(GuardDb guardDb, SecurityLog audit) : Gu
     private static SecuritySettingsDto ToDto(SecuritySettings s) => new(
         s.RetentionDays, SecuritySettings.MinRetentionDays, SecuritySettings.MaxRetentionDays,
         s.StepUpMinutes, SecuritySettings.MinStepUpMinutes, SecuritySettings.MaxStepUpMinutes,
-        s.TokenMaxDays, SecuritySettings.MinTokenMaxDays, SecuritySettings.MaxTokenMaxDays);
+        s.TokenMaxDays, SecuritySettings.MinTokenMaxDays, SecuritySettings.MaxTokenMaxDays, s.AppsMayRegister);
 }
 
 /// <summary>The step-up window as the site sets it: ten minutes unless changed, never more than thirty.</summary>

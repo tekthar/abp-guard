@@ -48,6 +48,12 @@ public class GuardSeeder(GuardDb guardDb, AccountProjector projector, IConfigura
                 throw new InvalidOperationException($"Guard:Seed:AdminPassword needs at least {MinAdminPassword} characters, as every password does.");
             }
 
+            // A new site starts with the retention periods' defaults confirmed; an upgraded one waits for an admin.
+            if (!await db.RetentionSettings.AnyAsync(cancellationToken))
+            {
+                db.RetentionSettings.Add(new RetentionSettings { ConfirmedAt = DateTime.UtcNow });
+            }
+
             DirectoryUser admin = new(Guid.NewGuid(), GuardConstants.InternalDirectoryId, "internal:admin", "admin")
             {
                 DisplayName = seed.AdminDisplayName,

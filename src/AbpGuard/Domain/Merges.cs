@@ -13,6 +13,9 @@ public static class AccountEmailSources
 
     /// <summary>It came with an account merged into this one.</summary>
     public const string Merge = "merge";
+
+    /// <summary>It was the account's primary address until another of its confirmed addresses took its place.</summary>
+    public const string FormerPrimary = "former-primary";
 }
 
 /// <summary>

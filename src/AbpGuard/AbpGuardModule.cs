@@ -29,7 +29,7 @@ public class AbpGuardModule : AbpModule
     /// <summary>The default authentication scheme: it sends each bearer token to the handler for its kind, and a browser's cookie to its session's.</summary>
     public const string GuardBearer = "GuardBearer";
 
-    public const string Version = "0.1.0";
+    public const string Version = "0.3.0";
 
     /// <summary>
     /// The scheme for a request: a personal access token, any other bearer token (OpenIddict's), or with no
@@ -188,6 +188,8 @@ public class AbpGuardModule : AbpModule
 
                     return default;
                 }).SetOrder(OpenIddict.Validation.OpenIddictValidationHandlers.ValidateAccessToken.Descriptor.Order + 1_000));
+                // A token made under the names a site used before reads as made under today's (GuardNames.Former).
+                options.AddEventHandler(TokenNamesOfToday.Descriptor);
             });
 
         // A bearer token is either an access token from the token endpoint (OpenIddict) or a personal access token. A
@@ -214,6 +216,10 @@ public class AbpGuardModule : AbpModule
 
         context.Services.AddHostedService<DirectorySyncScheduler>();
         context.Services.AddHostedService<SecurityAuditRetention>();
+        context.Services.AddHostedService<Services.Privacy.PersonalDataRetentionWorker>();
+        context.Services.TryAddSingleton<ISecurityFeedSender>(_ => new HttpSecurityFeedSender());
+        context.Services.AddHostedService<Services.SecurityFeedWorker>();
+        context.Services.AddHostedService<Services.SecurityAlertsWorker>();
     }
 
     /// <summary>Guard's data folder from its settings, Guard:DataRoot, or null (then the host's, <see cref="GuardStartupOptions"/>).</summary>

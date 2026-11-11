@@ -35,6 +35,14 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
     /// <summary>The grant type of the second step, with <c>ticket</c>, <c>method</c> and <c>code</c>: GuardNames.SecondFactorGrantType.</summary>
     private GuardNames Names => Services.WebSessionHandler.Wire(HttpContext);
 
+    // A code or refresh token made before the site renamed its claims and scopes reads as made under today's names, so the
+    // tokens made from it carry today's; one with such a claim under a name Guard doesn't know is refused (GuardNames.Former).
+    private async Task<ClaimsPrincipal?> GrantedAsync()
+    {
+        AuthenticateResult result = await HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+        return result.Principal is { } principal ? Names.Current(principal, Claims.Private.Scope) : null;
+    }
+
     [HttpPost("~/connect/token")]
     [AllowAnonymous]
 #pragma warning disable S4502 // reviewed: the token endpoint takes a client's grant (a code, a refresh token), never a cookie
@@ -111,24 +119,23 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
         // permission stands and their account is active.
         if (request.IsAuthorizationCodeGrantType())
         {
-            AuthenticateResult code = await HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
-            return await AppTokensAsync(code.Principal, cancellationToken);
+            return await AppTokensAsync(await GrantedAsync(), cancellationToken);
         }
 
         if (request.IsRefreshTokenGrantType())
         {
-            AuthenticateResult refreshed = await HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
-            if (refreshed.Principal?.GetClaim(Names.TokenClaim) is not null)
+            ClaimsPrincipal? refreshed = await GrantedAsync();
+            if (refreshed?.GetClaim(Names.TokenClaim) is not null)
             {
                 if (request.GetParameter(StepUpParameter) is not null)
                 {
                     return Refuse($"Only {options.Value.Texts.Product()}'s own web app can ask for a step-up.", Errors.UnauthorizedClient);
                 }
 
-                return await AppTokensAsync(refreshed.Principal, cancellationToken);
+                return await AppTokensAsync(refreshed, cancellationToken);
             }
 
-            if (!Guid.TryParse(refreshed.Principal?.GetClaim(Claims.Subject), out Guid accountId))
+            if (!Guid.TryParse(refreshed?.GetClaim(Claims.Subject), out Guid accountId))
             {
                 return Refuse("The session is no longer valid.");
             }
@@ -142,7 +149,7 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
             }
 
             // When the person last proved who they are travels with the session; a step-up moves it on.
-            DateTimeOffset? authTime = long.TryParse(refreshed.Principal!.GetClaim(Claims.AuthenticationTime), out long seconds)
+            DateTimeOffset? authTime = long.TryParse(refreshed!.GetClaim(Claims.AuthenticationTime), out long seconds)
                 ? DateTimeOffset.FromUnixTimeSeconds(seconds)
                 : null;
             if (request.GetParameter(StepUpParameter)?.ToString() is { } password)
@@ -155,7 +162,7 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
                 StepUpResult stepUp = await auth.StepUpAsync(account.Id, password, HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
                 if (!stepUp.Succeeded)
                 {
-                    if (stepUp.EndSession && refreshed.Principal.GetTokenId() is { } tokenId && await tokens.FindByIdAsync(tokenId, cancellationToken) is { } token)
+                    if (stepUp.EndSession && refreshed.GetTokenId() is { } tokenId && await tokens.FindByIdAsync(tokenId, cancellationToken) is { } token)
                     {
                         await tokens.TryRevokeAsync(token, cancellationToken);
                     }
@@ -181,8 +188,8 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
             }
 
             // A session that had its second step keeps saying so.
-            bool secondFactor = refreshed.Principal.GetClaims(Claims.AuthenticationMethodReference).Contains("mfa");
-            return SignIn(CreatePrincipal(account, refreshed.Principal.GetScopes(), authTime, secondFactor), OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+            bool secondFactor = refreshed.GetClaims(Claims.AuthenticationMethodReference).Contains("mfa");
+            return SignIn(CreatePrincipal(account, refreshed.GetScopes(), authTime, secondFactor), OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
         }
 
         return Refuse("This grant type is not supported.", Errors.UnsupportedGrantType);

@@ -15,6 +15,49 @@ public sealed record AccountInfo(Guid Id, string Username, string DisplayName, s
 
     /// <summary>What the account is: <see cref="AccountKinds"/>.</summary>
     public string Kind => IsAgent ? AccountKinds.Agent : IsService ? AccountKinds.Service : AccountKinds.Person;
+
+    /// <summary>
+    /// The person's name in other languages, by language code; <see cref="DisplayName"/> is
+    /// the name as written. Show a person in the request's language when they have a name in it, else the name as
+    /// written; store and export <see cref="DisplayName"/>.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? DisplayNames { get; init; }
+
+    /// <summary>
+    /// The account's picture: an app-relative path the host serves (<see cref="AccountPictures.IsPath"/>), or
+    /// null for its initials. Only service accounts (agents' among them) have one for now. Once people do, it's personal
+    /// data: erasure clears it, the export carries it, and a merge keeps the survivor's.
+    /// </summary>
+    public string? Picture { get; init; }
+}
+
+/// <summary>What an account's picture may be: a path on the site itself, never an address elsewhere.</summary>
+public static class AccountPictures
+{
+    public const int MaxLength = 300;
+
+    /// <summary>
+    /// A path of one "/" then only <c>[A-Za-z0-9/._-]</c>, with no ".." segment and no "//", at most
+    /// <see cref="MaxLength"/> characters. So no scheme ("https:", "javascript:", "data:"), no query or fragment, and
+    /// nothing a browser reads as another host ("//host/x.png", "/\host").
+    /// </summary>
+    public static bool IsPath(string? path)
+    {
+        if (string.IsNullOrEmpty(path) || path.Length > MaxLength || path[0] != '/' || path.Contains("//", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        foreach (char c in path)
+        {
+            if (c is not ((>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '/' or '.' or '_' or '-'))
+            {
+                return false;
+            }
+        }
+
+        return !path.Split('/').Any(segment => segment == "..");
+    }
 }
 
 /// <summary>What an account is: a person, a service account, or an agent's account (a service account an automated actor works through).</summary>
@@ -26,7 +69,14 @@ public static class AccountKinds
 }
 
 /// <summary>A group as other modules see it; Kind is standard, directory, ou or organization.</summary>
-public sealed record GroupInfo(Guid Id, string Name, string? Description, Guid DirectoryId, string Kind = "standard");
+public sealed record GroupInfo(Guid Id, string Name, string? Description, Guid DirectoryId, string Kind = "standard")
+{
+    /// <summary>
+    /// Its name in other languages, by language code; <see cref="Name"/> is the English, or
+    /// only, one. Show a group in the request's language when it has a name in it, else Name; store and export Name.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? Names { get; init; }
+}
 
 public interface IAccountLookup
 {
@@ -103,6 +153,15 @@ public interface IAccountProvisioning
     /// </summary>
     Task<ProvisionedAccount> EnsureInternalAccountAsync(Guid callerId, string username, string displayName, string? email, string? password,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The same, with the person's name in other languages by language code: a person made
+    /// gets them, and one found who has none yet takes them; names they already have are never replaced. The display
+    /// name stays the name as written. Codes that aren't languages and blank names are left out.
+    /// </summary>
+    Task<ProvisionedAccount> EnsureInternalAccountAsync(Guid callerId, string username, string displayName, IReadOnlyDictionary<string, string>? displayNames,
+        string? email, string? password, CancellationToken cancellationToken = default) =>
+        EnsureInternalAccountAsync(callerId, username, displayName, email, password, cancellationToken);
 }
 
 public static class GuardWellKnown

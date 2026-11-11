@@ -256,6 +256,7 @@ public sealed partial class SecurityTests : IAsyncLifetime
     public async Task Only_the_browsers_session_allows_an_app()
     {
         string access = await PhoneAccessTokenAsync();
+        await LetAppsRegisterAsync();
         HttpResponseMessage registered = await Client().PostAsJsonAsync("/connect/register", new { client_name = "An app", redirect_uris = new[] { "https://app.example/cb" } });
         Assert.Equal(HttpStatusCode.Created, registered.StatusCode);
         string clientId = JsonDocument.Parse(await registered.Content.ReadAsStringAsync()).RootElement.GetProperty("client_id").GetString()!;
@@ -473,8 +474,19 @@ public sealed partial class SecurityTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, (await BearerAsync(access, "/api/guard/me")).StatusCode);
     }
 
+    /// <summary>A new site lets no app register itself until an admin allows it (Administration › Security): this one does.</summary>
+    private async Task LetAppsRegisterAsync()
+    {
+        _ = Client();
+        await using NpgsqlConnection connection = new($"{Server};Database={_database}");
+        await connection.OpenAsync();
+        await using NpgsqlCommand allow = new("UPDATE guard.security_settings SET \"AppsMayRegister\" = true", connection);
+        Assert.Equal(1, await allow.ExecuteNonQueryAsync());
+    }
+
     private async Task<string> RegisterAppAsync()
     {
+        await LetAppsRegisterAsync();
         HttpResponseMessage registered = await Client().PostAsJsonAsync("/connect/register", new { client_name = "An app", redirect_uris = new[] { "https://app.example/cb" } });
         Assert.Equal(HttpStatusCode.Created, registered.StatusCode);
         return JsonDocument.Parse(await registered.Content.ReadAsStringAsync()).RootElement.GetProperty("client_id").GetString()!;

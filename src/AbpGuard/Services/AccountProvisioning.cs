@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using AbpGuard.Data;
 using AbpGuard.Domain;
 using AbpGuard.Acting;
 using Volo.Abp.DependencyInjection;
@@ -17,8 +18,12 @@ public class AccountProvisioning(GuardDb guardDb, AccountProjector projector, IM
     AccountMergeService merges, SecurityLog audit, Microsoft.Extensions.Options.IOptions<GuardNames> names, Microsoft.Extensions.Options.IOptions<GuardOptions> options)
     : IAccountProvisioning, ITransientDependency
 {
-    public async Task<ProvisionedAccount> EnsureInternalAccountAsync(Guid callerId, string username, string displayName, string? email, string? password,
-        CancellationToken cancellationToken = default)
+    public Task<ProvisionedAccount> EnsureInternalAccountAsync(Guid callerId, string username, string displayName, string? email, string? password,
+        CancellationToken cancellationToken = default) =>
+        EnsureInternalAccountAsync(callerId, username, displayName, null, email, password, cancellationToken);
+
+    public async Task<ProvisionedAccount> EnsureInternalAccountAsync(Guid callerId, string username, string displayName, IReadOnlyDictionary<string, string>? displayNames,
+        string? email, string? password, CancellationToken cancellationToken = default)
     {
         if (!await membership.IsMemberAsync(callerId, GuardWellKnown.AdminsGroupId, cancellationToken))
         {
@@ -30,23 +35,35 @@ public class AccountProvisioning(GuardDb guardDb, AccountProjector projector, IM
             throw new ArgumentException(Usernames.Rule);
         }
 
+        if (Usernames.IsReserved(username) || Usernames.IsReservedName(displayName))
+        {
+            throw new ArgumentException(Usernames.ReservedRule);
+        }
+
         if (password is not null && password.Length < 10)
         {
             throw new ArgumentException("Passwords need at least 10 characters.");
         }
 
         string normalized = GuardConstants.Normalize(username);
+        int leftOut = 0;
+        Dictionary<string, string> names = displayNames is null ? [] : DirectorySyncService.SyncedNames(displayNames, ref leftOut);
         (ProvisionedAccount account, List<object> made) = await guardDb.RunAsync(async db =>
         {
-            Account? found = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.NormalizedUsername == normalized, cancellationToken);
+            Account? found = await db.Accounts.FirstOrDefaultAsync(a => a.NormalizedUsername == normalized, cancellationToken);
             if (found is not null)
             {
-                return (new ProvisionedAccount(found.MergedIntoId ?? found.Id, "username"), new List<object>());
+                // Names filled for the first time are told, so the copies others keep learn the new languages.
+                List<object> told = await FillNamesAsync(db, found, names, cancellationToken)
+                    ? [new AccountChangedEto(found.Id, found.Username, found.DisplayName, found.DisplayName, null, null)]
+                    : [];
+                return (new ProvisionedAccount(found.MergedIntoId ?? found.Id, "username"), told);
             }
 
             DirectoryUser user = new(Guid.NewGuid(), GuardConstants.InternalDirectoryId, $"internal:{normalized}", username.Trim())
             {
                 DisplayName = string.IsNullOrWhiteSpace(displayName) ? username.Trim() : displayName.Trim(),
+                DisplayNames = names.Count == 0 ? null : names,
                 Email = email?.Trim(),
             };
             if (password is not null)
@@ -65,17 +82,41 @@ public class AccountProvisioning(GuardDb guardDb, AccountProjector projector, IM
             return (new ProvisionedAccount(created.Id, "created"), events);
         }, requiresNew: true, cancellationToken, isTransactional: true);
 
-        if (made.Count > 0)
+        foreach (object e in made)
         {
-            foreach (object e in made)
-            {
-                await Controllers.GuardEvents.PublishAsync(events, e, cancellationToken);
-            }
+            await Controllers.GuardEvents.PublishAsync(events, e, cancellationToken);
+        }
 
+        if (account.MatchedBy == "created")
+        {
             await merges.FoldPlaceholdersAsync(MergeReasons.AccountCreated, cancellationToken); // a placeholder with this address joins them
         }
 
         return account;
+    }
+
+    /// <summary>
+    /// A person found who has no names by language yet takes the given ones, on the account and on its internal record (so
+    /// a rebuild keeps them). True when names were filled.
+    /// </summary>
+    private static async Task<bool> FillNamesAsync(GuardDbContext db, Account found, Dictionary<string, string> names, CancellationToken ct)
+    {
+        if (names.Count == 0 || found.DisplayNames.Count > 0 || found.MergedIntoId is not null) // a merged account is no longer the one in use
+        {
+            return false;
+        }
+
+        found.SetDisplayNames(names);
+        DirectoryUser? record = found.DirectoryUserId is { } id
+            ? await db.DirectoryUsers.FirstOrDefaultAsync(u => u.Id == id && u.DirectoryId == GuardConstants.InternalDirectoryId, ct)
+            : null;
+        if (record is not null)
+        {
+            record.DisplayNames = new Dictionary<string, string>(found.DisplayNames);
+        }
+
+        await db.SaveChangesAsync(ct);
+        return true;
     }
 
     public const string ImportedType = "imported";

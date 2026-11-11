@@ -275,6 +275,66 @@ public interface IPersonalDataExporter
     Task ExportAsync(IPersonalDataExport export, CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// An erasure (PDPL's right to destruction): whom it's about (an account, with every address it had, or
+/// someone outside by an address), the names they had (to find copies of them in text), and the pseudonym ("Former
+/// person {n}") that takes their place where what they wrote stays. A store with legal holds of its own (a host's project, say)
+/// checks them itself. Plugins build against it: what's added later comes as init properties with defaults.
+/// </summary>
+public sealed record PersonalDataErasure(PersonalDataSubject Subject, IReadOnlyList<string> Names, string Pseudonym);
+
+/// <summary>Where a privacy notice was accepted.</summary>
+public static class NoticeAcceptedWhere
+{
+    public const string SignUp = "sign-up";
+    public const string SignIn = "sign-in";
+    public const string Portal = "portal";
+}
+
+/// <summary>
+/// The site's privacy notice for a host's own forms: a portal's request shows its current version
+/// and records that the person accepted it, by account or by the address they gave. Null: no notice is published.
+/// </summary>
+public interface IPrivacyNoticeAcceptance
+{
+    Task<int?> CurrentVersionAsync(CancellationToken cancellationToken = default);
+
+    Task RecordAsync(Guid? accountId, string? address, int version, string where, string? ip, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// How long a store keeps something about people: its key (unique in the module or plugin), the
+/// store it's of, what goes after the period, and the period's default and bounds in days.
+/// </summary>
+public sealed record RetentionRule(string Key, string Store, LocalizedText Name, int DefaultDays, int MinDays = 1, int MaxDays = 3650);
+
+/// <summary>
+/// Removes what a store keeps past its periods. Guard calls it once a day, a rule at a time, under the
+/// cluster's lock, with the period the site confirmed: up to <c>batch</c> rows older than <c>before</c>, returning how
+/// many went (fewer than the batch means it's done). Registered as an exporter is.
+/// </summary>
+public interface IPersonalDataSweeper
+{
+    IReadOnlyList<RetentionRule> Rules { get; }
+
+    Task<int> SweepAsync(string rule, DateTime before, int batch, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Erases or anonymises what some stores hold about one person: their own private data goes, what
+/// they wrote for others stays under the pseudonym, and every copy of their name and addresses becomes it. Registered
+/// as an exporter is; Guard runs every module's and plugin's before it wipes the account itself, and an erasure that
+/// meets a failing one waits to be resumed, so the person's identifiers are there until every store is done. An eraser
+/// must be idempotent (a resume runs it again over what it did) and honour its token: Guard cancels it after a time
+/// limit, and holds the erasure, so nothing resumes it, until it has returned.
+/// </summary>
+public interface IPersonalDataEraser
+{
+    IReadOnlyList<string> Stores { get; }
+
+    Task EraseAsync(PersonalDataErasure erasure, CancellationToken cancellationToken = default);
+}
+
 /// <summary>Rows for <see cref="IPersonalDataExport.WriteAsync"/>.</summary>
 public static class PersonalDataRows
 {
@@ -330,10 +390,24 @@ public static partial class PersonalDataDeclaration
     }
 
     /// <summary>
-    /// Reads a plugin's contribution (null when its manifest has none). Kinds and destinations are checked against what
-    /// the host knows (the host's lists unless it passes its own).
+    /// The longest a store's own key may be: with an app ID (at most 129) and the dot it's 194, within the 200 Guard keeps
+    /// a store's key in.
+    /// </summary>
+    public const int MaxStoreKeyLength = 64;
+
+    /// <summary>
+    /// Reads a plugin's contribution (null when its manifest has none), its tables in the schema <see cref="SchemaOf"/>
+    /// names. Kinds and destinations are checked against what the host knows (the host's lists unless it passes its own).
     /// </summary>
     public static PluginPersonalData Read(string plugin, JsonElement? contribution, IReadOnlyCollection<string>? kinds = null,
+        IReadOnlyCollection<string>? destinations = null) =>
+        Read(plugin, SchemaOf(plugin), contribution, kinds, destinations);
+
+    /// <summary>
+    /// Reads a plugin's contribution, its tables in <paramref name="schema"/>: the schema the host gives the plugin's
+    /// context, which may be one it kept from before (a host that pins none passes <see cref="SchemaOf"/>).
+    /// </summary>
+    public static PluginPersonalData Read(string plugin, string schema, JsonElement? contribution, IReadOnlyCollection<string>? kinds = null,
         IReadOnlyCollection<string>? destinations = null)
     {
         if (contribution is not { } items)
@@ -351,7 +425,6 @@ public static partial class PersonalDataDeclaration
             return new(plugin, States.Problems, [], [], [$"{ExtensionPoint} is a list of entries."]);
         }
 
-        string schema = SchemaOf(plugin);
         int index = 0;
         foreach (JsonElement item in items.EnumerateArray())
         {
@@ -395,9 +468,9 @@ public static partial class PersonalDataDeclaration
             }
 
             string key = Text(item, "key") ?? "";
-            if (!StoreKey().IsMatch(key))
+            if (!StoreKey().IsMatch(key) || key.Length > MaxStoreKeyLength)
             {
-                problems.Add($"{at}: a store's key is lowercase words joined by dashes.");
+                problems.Add($"{at}: a store's key is lowercase words joined by dashes, at most {MaxStoreKeyLength} characters.");
                 continue;
             }
 
@@ -494,9 +567,30 @@ public static partial class PersonalDataDeclaration
         }
         """;
 
-    /// <summary>The schema a plugin's tables are in, as a plugin host names it: "guard-ldap" is "plg_guard_ldap".</summary>
-    public static string SchemaOf(string plugin) =>
-        "plg_" + new string(plugin.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+    /// <summary>
+    /// The schema a plugin's tables are in, as a plugin host names it: "plg_" and the
+    /// plugin's app ID with "." written "__" and "-" written "_" (acme.issue-sync is plg_acme__issue_sync); a name over
+    /// Postgres's 63 bytes is "plh_", its first 46 characters, "_" and 12 hex digits of the app ID's SHA-256. A key of
+    /// one word, from before app IDs, has anything but letters and digits written "_": "guard-ldap" is "plg_guard_ldap".
+    /// A host may keep a plugin's schema from before, so it passes the schema to <see cref="Read(string, string, JsonElement?, IReadOnlyCollection{string}?, IReadOnlyCollection{string}?)"/>.
+    /// </summary>
+    public static string SchemaOf(string plugin)
+    {
+        int dot = plugin.IndexOf('.', StringComparison.Ordinal);
+        if (dot <= 0 || !IsSlug(plugin[..dot]) || !IsSlug(plugin[(dot + 1)..]))
+        {
+            return "plg_" + new string(plugin.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+        }
+
+        string written = plugin.Replace(".", "__", StringComparison.Ordinal).Replace('-', '_');
+        if (written.Length <= 59)
+        {
+            return "plg_" + written;
+        }
+
+        string hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(plugin)));
+        return "plh_" + written[..46] + "_" + hash[..12];
+    }
 
     private static string? Text(JsonElement item, string property) =>
         item.TryGetProperty(property, out JsonElement value) && value.ValueKind == JsonValueKind.String ? value.GetString()?.Trim() : null;
@@ -582,4 +676,10 @@ public static partial class PersonalDataDeclaration
 
     [GeneratedRegex("^[a-z0-9]+(-[a-z0-9]+)*$", RegexOptions.None, TimeoutMilliseconds)]
     private static partial Regex StoreKey();
+
+    private static bool IsSlug(string text) => Slug().IsMatch(text) && !text.Contains("--", StringComparison.Ordinal);
+
+    /// <summary>An app ID's slug, as a plugin host has it: \z, not $, which also matches before a last "\n".</summary>
+    [GeneratedRegex(@"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\z", RegexOptions.None, TimeoutMilliseconds)]
+    private static partial Regex Slug();
 }

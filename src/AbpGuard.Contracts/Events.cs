@@ -23,6 +23,15 @@ public sealed record AccountDeactivatedEto(Guid AccountId, string Username, stri
 
 public sealed record AccountReactivatedEto(Guid AccountId, string Username) : GuardEvent;
 
+/// <summary>An account was erased: it's its pseudonym now. Nothing erased travels with it.</summary>
+public sealed record AccountErasedEto(Guid AccountId, string Pseudonym) : GuardEvent;
+
+/// <summary>
+/// An account's display name or primary address was corrected (PDPL's right to correction): a host carries the new name
+/// and address to the copies it keeps. Each pair is null where that part didn't change.
+/// </summary>
+public sealed record AccountChangedEto(Guid AccountId, string Username, string? OldDisplayName, string? NewDisplayName, string? OldEmail, string? NewEmail) : GuardEvent;
+
 /// <summary>An account was folded into another: its references now name the survivor; Automatic when Guard did it.</summary>
 public sealed record AccountMergedEto(Guid MergeId, Guid SourceId, string SourceUsername, Guid SurvivorId, string SurvivorUsername, bool Automatic) : GuardEvent;
 

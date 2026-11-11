@@ -14,6 +14,12 @@ public static class GuardMessageKinds
     /// <summary>Confirming an address someone added to their account.</summary>
     public const string AddressVerify = "guard.email-verify";
 
+    /// <summary>Telling an address that it's no longer the account's primary (a correction).</summary>
+    public const string AddressChanged = "guard.email-changed";
+
+    /// <summary>Site admins told of a possible breach.</summary>
+    public const string SecurityAlert = Services.SecurityAlerts.MessageKind;
+
     /// <summary>A second step's code by email.</summary>
     public const string SecondFactorCode = "guard.second-factor-code";
 
@@ -21,8 +27,9 @@ public static class GuardMessageKinds
     public const string SecondFactorCodeMessage = SecondFactorCode + ".message";
 
     /// <summary>
-    /// Whether the kind carries a link or a code that works for someone (all of Guard's do): then it's sent as a secret,
-    /// so the mail log keeps neither its text nor its subject, and an admin reading it can't use a reset or a code.
+    /// Whether the kind carries a link or a code that works for someone (all of Guard's but the notices, AddressChanged and
+    /// SecurityAlert): then it's sent as a secret, so the mail log keeps neither its text nor its subject, and an admin
+    /// reading it can't use a reset or a code.
     /// </summary>
     public static bool CarriesSecret(string kind) => kind is SignUpVerify or PasswordReset or AddressVerify or SecondFactorCode or SecondFactorCodeMessage;
 }
@@ -75,7 +82,7 @@ public sealed class GuardTextOptions
         ["ar"] = ProcessingRecordTexts.Arabic,
     };
 
-    /// <summary>A person's data export's words by language (its README and why a store isn't in it;, step 3), as <see cref="Record"/>.</summary>
+    /// <summary>A person's data export's words by language (its README and why a store isn't in it), as <see cref="Record"/>.</summary>
     public Dictionary<string, PersonalDataExportTexts> Export { get; } = new(StringComparer.OrdinalIgnoreCase)
     {
         ["en"] = PersonalDataExportTexts.English,
@@ -116,8 +123,10 @@ public static class GuardMessageTemplates
         Services.SelfServiceMail.VerifyDefinition,
         Services.SelfServiceMail.ResetDefinition,
         Services.AddressMail.VerifyDefinition,
+        Services.AddressMail.ChangedDefinition,
         Services.TwoFactor.SecondFactorMail.CodeDefinition,
         Services.TwoFactor.SecondFactorMail.CodeMessageDefinition,
+        Services.SecurityAlerts.Definition,
     ];
 
     /// <summary>Guard's own texts, as they are: <see cref="ProductMarker"/> where the product's name goes.</summary>

@@ -71,8 +71,16 @@ public static class Addresses
 
 public sealed record AccountEmailDto(Guid Id, string Email, string Source, DateTime? VerifiedAt, DateTime AddedAt, bool MailGoesHere);
 
-/// <summary>An account's addresses: its directory's, its own, and the one mail goes to.</summary>
-public sealed record AccountEmailsDto(string? DirectoryEmail, string? MailTo, bool DirectoryMailGoesHere, List<AccountEmailDto> Addresses);
+/// <summary>
+/// An account's addresses: its directory's, its own, and the one mail goes to. Correctable when its name and
+/// primary are corrected here (the internal directory's account); else Directory names where they're corrected.
+/// </summary>
+public sealed record AccountEmailsDto(string? DirectoryEmail, string? MailTo, bool DirectoryMailGoesHere, List<AccountEmailDto> Addresses)
+{
+    public bool Correctable { get; init; }
+
+    public string? Directory { get; init; }
+}
 
 public sealed record AddEmailInput(string Email);
 
@@ -114,6 +122,37 @@ public static class AddressMail
             ["link"] = "https://example.com/emails/verify#token=sample",
             ["hours"] = 72,
         });
+
+    public const string Changed = GuardMessageKinds.AddressChanged;
+
+    /// <summary>
+    /// Telling an address that it's no longer an account's primary (a correction): if the person didn't
+    /// make the change, they hear of it at the address they had.
+    /// </summary>
+    public static readonly GuardMessageTemplate ChangedDefinition = new(
+        Changed,
+        Email: true,
+        Text("A primary address changed", "تغيّر العنوان الرئيسي"),
+        Text("Sent to an account's former primary address when another of its confirmed addresses takes its place.",
+            "تُرسل إلى العنوان الرئيسي السابق للحساب حين يحلّ محله عنوان آخر مؤكَّد من عناوينه."),
+        new Dictionary<string, GuardTemplateText>
+        {
+            ["en"] = new("Your {product} account's address changed",
+                "Hello,\n\nThe {product} account {{ username }} now uses {{ address }} as its primary address. This address stays one of its "
+                + "confirmed addresses.\n\nIf you didn't make this change, tell your site's administrators at once."),
+            ["ar"] = new("تغيّر عنوان حسابك في {product}",
+                "مرحبًا،\n\nأصبح حساب {product} {{ username }} يستخدم {{ address }} عنوانًا رئيسيًا. ويبقى هذا العنوان من عناوينه المؤكَّدة."
+                + "\n\nإن لم تُجرِ هذا التغيير، فأخبر مشرفي موقعك فورًا."),
+        },
+        [
+            new("username", Text("The account's username", "اسم المستخدم للحساب")),
+            new("address", Text("The new primary address", "العنوان الرئيسي الجديد")),
+        ],
+        new Dictionary<string, object?>
+        {
+            ["username"] = "dana",
+            ["address"] = "dana@home.example",
+        });
 }
 
 /// <summary>
@@ -139,9 +178,14 @@ public class AccountEmailService(GuardDb guardDb, IDataProtectionProvider protec
             ?? throw new Volo.Abp.Domain.Entities.EntityNotFoundException(typeof(Account), accountId);
         List<AccountEmail> rows = await db.AccountEmails.AsNoTracking().Where(e => e.AccountId == accountId).OrderBy(e => e.AddedAt).ToListAsync(ct);
         string? mailTo = account.MailAddress;
+        UserDirectory? directory = await db.Directories.AsNoTracking().FirstOrDefaultAsync(d => d.Id == account.DirectoryId, ct);
         return new AccountEmailsDto(account.Email, account.MailTo, account.MailTo is null && account.Email is not null,
             rows.Select(e => new AccountEmailDto(e.Id, e.Email, e.Source, e.VerifiedAt, e.AddedAt,
-                account.MailTo is not null && e.VerifiedAt is not null && string.Equals(e.Email, mailTo, StringComparison.OrdinalIgnoreCase))).ToList());
+                account.MailTo is not null && e.VerifiedAt is not null && string.Equals(e.Email, mailTo, StringComparison.OrdinalIgnoreCase))).ToList())
+        {
+            Correctable = directory?.IsInternal == true && account.DirectoryUserId is not null && !account.IsService && account.MergedIntoId is null,
+            Directory = directory?.Name,
+        };
     }
 
     /// <summary>An admin adds an address: verified at once. A placeholder with it is merged into the account.</summary>

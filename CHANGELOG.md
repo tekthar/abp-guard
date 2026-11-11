@@ -6,6 +6,40 @@ change the API.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-11
+
+What the host Guard came from built after 0.1.0, brought into the package: privacy (correction, erasure, retention,
+the privacy notice and consent, breaches), names by language, renamed claims and plugins. Same tables in the `guard`
+schema; eight new migrations, run at start as the others are.
+
+### Added
+
+- **Correction:** a person corrects their display name and chooses which confirmed address is their primary (the one
+  before is told); admins do the same for internal accounts. `AccountChangedEto` carries the change.
+- **Erasure:** a person asks to be erased, an admin erases an account or someone outside the site by an address, or
+  declines; every module's and plugin's `IPersonalDataEraser` runs first, Guard's own last, and an erasure that meets a
+  failing store waits to be resumed. Legal holds stop it. An erased account becomes "Former person {n}"
+  (`AccountErasedEto`); those names are kept for erased accounts.
+- **Retention:** stores declare rules (`IPersonalDataSweeper`), admins set and confirm their periods, and a daily sweep
+  removes what's past them. A new site starts confirmed with the defaults; an upgraded one sweeps nothing until an admin
+  confirms.
+- **Privacy notice and consent:** versions in each language, accepted on sign-up, by people signed in and through a
+  host's own forms (`IPrivacyNoticeAcceptance`); consent withdrawn where it's the legal basis.
+- **Breaches:** alerts to site admins (`Guard:SecurityAlerts`), the security log as CSV, and a signed feed of it to a
+  receiver outside the server's network.
+- **Apps may register themselves** only once an admin allows it on a new site; an upgraded site keeps it on.
+- **Names by language** for people, service accounts, directories (from a connector's settings), groups and roles;
+  service accounts' pictures; directory connectors' warnings and settings checks.
+- **Renamed claims and plugins:** `Guard:Names:Former` reads tokens made under a site's former claim and scope names;
+  `PersonalDataKeys` moves what Guard keeps by a plugin's key when a host renames its plugins.
+- Names a host may set: `Guard:Names:FeedSignatureHeader` (`X-Guard-Signature` by default) and
+  `Guard:Pages:SecurityLog` (`/admin/security`).
+
+### Changed
+
+- Declining an erasure, adding a legal hold and marking a consent withdrawal handled ask for a step-up, as an admin's
+  other changes do.
+
 ## [0.2.0] - 2026-11-10
 
 Toda.Guard is now AbpGuard, a product of its own. Same code, tables and migrations, under new package ids and

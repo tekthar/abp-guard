@@ -27,6 +27,27 @@ public sealed record ProcessingRecordTexts
     public required string Recipients { get; init; }
     public required string OutsideCountry { get; init; }
     public required string SiteCountry { get; init; }
+
+    /// <summary>The privacy notice's heading, its version ({0} the version, {1} the date), and the gap when none is published.</summary>
+    public string Notice { get; init; } = "The privacy notice";
+
+    public string NoticeVersion { get; init; } = "Version {0}, published {1}; people accept it on signing up and on the portal, and are asked again when it changes.";
+
+    public string NoNotice { get; init; } = "None published yet: publish it in Administration › Privacy.";
+
+    /// <summary>Whether apps may register themselves, and what each says.</summary>
+    public string AppsRegister { get; init; } = "Apps that register themselves";
+
+    public string AppsRegisterOn { get; init; } = "On: an app may register itself, and once a person allows it, it reads what they may. Turn it off in Administration › Security audit unless the site needs it.";
+
+    public string AppsRegisterOff { get; init; } = "Off: only apps a site admin adds may ask people to allow them.";
+
+    /// <summary>The security log's feed: where it goes ({0} its host), or that it's off.</summary>
+    public string Feed { get; init; } = "The security log's feed";
+
+    public string FeedOn { get; init; } = "On, to {0}: it receives the security log as it's written, with usernames and network addresses; what it received can't be erased from here.";
+
+    public string FeedOff { get; init; } = "Off.";
     public required string Service { get; init; }
     public required string Kept { get; init; }
     public required string Sensitive { get; init; }
@@ -134,6 +155,15 @@ public sealed record ProcessingRecordTexts
         Recipients = "من يتلقاها",
         OutsideCountry = "خارج بلد الموقع",
         SiteCountry = "بلد الموقع",
+        Notice = "إشعار الخصوصية",
+        NoticeVersion = "الإصدار {0}، نُشر في {1}؛ يقبله الأشخاص عند التسجيل وفي البوابة، ويُسألون مجددًا عند تغييره.",
+        NoNotice = "لم يُنشر بعد: انشره من الإدارة › الخصوصية.",
+        AppsRegister = "التطبيقات التي تسجّل نفسها",
+        AppsRegisterOn = "مفعّل: يمكن لتطبيق أن يسجّل نفسه، ومتى أذن له شخص قرأ ما يحق له. أوقفه من الإدارة › سجل الأمان ما لم يحتجه الموقع.",
+        AppsRegisterOff = "متوقف: لا يطلب إذن الأشخاص إلا التطبيقات التي يضيفها مشرف الموقع.",
+        Feed = "تغذية سجل الأمان",
+        FeedOn = "مفعّلة، إلى {0}: يستقبل سجل الأمان عند كتابته، بأسماء المستخدمين وعناوين الشبكة، وما استقبله لا يمكن محوه من هنا.",
+        FeedOff = "متوقفة.",
         Service = "الخدمة {0}",
         Kept = "مدة الحفظ حاليًا",
         Sensitive = "قد يحوي بيانات حساسة",
@@ -201,6 +231,12 @@ public static class ProcessingRecord
         }
 
         md.Append("## ").Append(t.SiteCountry).Append("\n\n").Append(Line(map.Settings.Country) ?? t.NotRecorded).Append("\n\n");
+        md.Append("## ").Append(t.Notice).Append("\n\n").Append(map.Settings.NoticeVersion is { } version
+            ? string.Format(CultureInfo.InvariantCulture, t.NoticeVersion, version, map.Settings.NoticePublishedAt?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))
+            : t.NoNotice).Append("\n\n");
+        md.Append("## ").Append(t.AppsRegister).Append("\n\n").Append(map.Settings.AppsMayRegister ? t.AppsRegisterOn : t.AppsRegisterOff).Append("\n\n");
+        md.Append("## ").Append(t.Feed).Append("\n\n").Append(map.Settings.SecurityFeedHost is { } feedHost
+            ? string.Format(CultureInfo.InvariantCulture, t.FeedOn, feedHost) : t.FeedOff).Append("\n\n");
         md.Append("## ").Append(t.Activities).Append('\n');
         foreach (Row row in Rows(map, t, language))
         {

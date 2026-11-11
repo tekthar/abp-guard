@@ -4,8 +4,8 @@ using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using AbpGuard.Data;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
+using AbpGuard.Data;
 using Volo.Abp.EntityFrameworkCore;
 
 #nullable disable
@@ -44,8 +44,17 @@ namespace AbpGuard.Data.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("DisplayNames")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'{}'::jsonb");
+
                     b.Property<string>("Email")
                         .HasColumnType("text");
+
+                    b.Property<DateTime?>("ErasedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("IsAgent")
                         .HasColumnType("boolean");
@@ -78,6 +87,14 @@ namespace AbpGuard.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
+
+                    b.Property<string>("OtherNames")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<string>("Picture")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -220,6 +237,39 @@ namespace AbpGuard.Data.Migrations
                     b.ToTable("account_merges", "guard");
                 });
 
+            modelBuilder.Entity("AbpGuard.Domain.ConsentWithdrawal", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("HandledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("HandledBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("StoreKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccountId");
+
+                    b.ToTable("consent_withdrawals", "guard");
+                });
+
             modelBuilder.Entity("AbpGuard.Domain.DirectoryUser", b =>
                 {
                     b.Property<Guid>("Id")
@@ -233,6 +283,9 @@ namespace AbpGuard.Data.Migrations
 
                     b.Property<string>("DisplayName")
                         .HasColumnType("text");
+
+                    b.Property<string>("DisplayNames")
+                        .HasColumnType("jsonb");
 
                     b.Property<string>("Email")
                         .HasColumnType("text");
@@ -317,6 +370,12 @@ namespace AbpGuard.Data.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<string>("Names")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'{}'::jsonb");
+
                     b.Property<string>("NormalizedName")
                         .IsRequired()
                         .HasMaxLength(256)
@@ -371,6 +430,47 @@ namespace AbpGuard.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("memberships", "guard");
+                });
+
+            modelBuilder.Entity("AbpGuard.Domain.LegalHold", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Address")
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("ReleasedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReleasedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("Until")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccountId");
+
+                    b.HasIndex("Address");
+
+                    b.ToTable("legal_holds", "guard");
                 });
 
             modelBuilder.Entity("AbpGuard.Domain.PermissionStamp", b =>
@@ -458,6 +558,126 @@ namespace AbpGuard.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("personal_access_tokens", "guard");
+                });
+
+            modelBuilder.Entity("AbpGuard.Domain.PersonalDataErasureRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DecidedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DeclinedReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTime?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Number")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Number"));
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<Guid?>("RequestedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Stores")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Subject")
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccountId");
+
+                    b.HasIndex("Number")
+                        .IsUnique();
+
+                    b.HasIndex("State");
+
+                    b.ToTable("erasures", "guard");
+                });
+
+            modelBuilder.Entity("AbpGuard.Domain.PrivacyAcceptance", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Address")
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Ip")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Where")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccountId");
+
+                    b.HasIndex("Address");
+
+                    b.ToTable("privacy_acceptances", "guard");
+                });
+
+            modelBuilder.Entity("AbpGuard.Domain.PrivacyNoticeVersion", b =>
+                {
+                    b.Property<int>("Number")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Number"));
+
+                    b.Property<DateTime>("PublishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("PublishedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Texts")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Number");
+
+                    b.ToTable("privacy_notices", "guard");
                 });
 
             modelBuilder.Entity("AbpGuard.Domain.PrivacySettings", b =>
@@ -554,6 +774,48 @@ namespace AbpGuard.Data.Migrations
                     b.ToTable("recovery_codes", "guard");
                 });
 
+            modelBuilder.Entity("AbpGuard.Domain.RetentionPeriod", b =>
+                {
+                    b.Property<string>("RuleKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int?>("Days")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("LastCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LastSweptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("RuleKey");
+
+                    b.ToTable("retention_periods", "guard");
+                });
+
+            modelBuilder.Entity("AbpGuard.Domain.RetentionSettings", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ConfirmedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("retention_settings", "guard");
+                });
+
             modelBuilder.Entity("AbpGuard.Domain.Role", b =>
                 {
                     b.Property<Guid>("Id")
@@ -561,6 +823,12 @@ namespace AbpGuard.Data.Migrations
 
                     b.Property<string>("Description")
                         .HasColumnType("text");
+
+                    b.Property<string>("Descriptions")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'{}'::jsonb");
 
                     b.Property<bool>("IsSystem")
                         .HasColumnType("boolean");
@@ -574,6 +842,12 @@ namespace AbpGuard.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Names")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'{}'::jsonb");
 
                     b.HasKey("Id");
 
@@ -684,6 +958,23 @@ namespace AbpGuard.Data.Migrations
                     b.ToTable("second_factors", "guard");
                 });
 
+            modelBuilder.Entity("AbpGuard.Domain.SecurityAlertState", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CheckedUpTo")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Sent")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("security_alerts", "guard");
+                });
+
             modelBuilder.Entity("AbpGuard.Domain.SecurityEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -741,12 +1032,51 @@ namespace AbpGuard.Data.Migrations
                     b.ToTable("security_events", "guard");
                 });
 
+            modelBuilder.Entity("AbpGuard.Domain.SecurityFeedSettings", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("CursorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CursorTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("FailingSince")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTime?>("LastSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProtectedSecret")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Url")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("security_feed", "guard");
+                });
+
             modelBuilder.Entity("AbpGuard.Domain.SecuritySettings", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
                     b.Property<bool>("AdminsTwoFactorSeeded")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("AppsMayRegister")
                         .HasColumnType("boolean");
 
                     b.Property<int>("RetentionDays")
@@ -989,6 +1319,12 @@ namespace AbpGuard.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Names")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'{}'::jsonb");
 
                     b.Property<int>("Order")
                         .HasColumnType("integer");
