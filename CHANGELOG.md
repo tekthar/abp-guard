@@ -39,6 +39,12 @@ schema; eight new migrations, run at start as the others are.
 
 - Declining an erasure, adding a legal hold and marking a consent withdrawal handled ask for a step-up, as an admin's
   other changes do.
+- `PersonalDataDeclaration.SchemaOf` names a plugin's schema from its app ID: `acme.notes` is `plg_acme__notes` ("."
+  written "__", "-" written "_"). A one-word key from before app IDs keeps its old name. Code or tests that build
+  `plg_{publisher}_{app}` themselves read no tables until they follow it.
+- `IServiceAccounts` has `RenameAsync` and `SetPictureAsync`. A host's own implementation, or a test double, needs them
+  before it builds.
+- A new site refuses apps registering themselves until an admin allows it; an upgraded site keeps them allowed.
 
 ## [0.2.0] - 2026-11-10
 
