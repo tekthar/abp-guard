@@ -24,7 +24,11 @@ Code that uses the constants (`GuardPolicies.Admin`, `WebSessionHandler.SchemeNa
 
 ## 2. The names to keep
 
-Set these before the first start on AbpGuard, in `appsettings.json` or in code before Guard reads its settings:
+Set these before the first start on AbpGuard, in `appsettings.json` or in code before Guard reads its settings.
+They are Toda.Guard 0.1.x's defaults. A host that already set any of them to values of its own keeps those instead:
+look at what it sets today first, above all `ProtectionPrefix` and `ImportedDirectorySalt`. Copying a value it
+had changed makes the secrets Guard encrypted unreadable (authenticator apps, directories' passwords) and gives
+imported directories new ids.
 
 ```json
 {
