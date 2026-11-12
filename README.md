@@ -82,7 +82,8 @@ Configure it in the `Guard` section (`GuardOptions`):
   templates of your own. Give it: without one, the mails name "AbpGuard".
 - **First start:** `SignUp:Open` opens sign-up into the internal directory; it is closed by default, and an admin's
   later choice stays. `Seed` names what the first start makes: the admin's display name and email, the internal
-  directory, and the admins and users groups with their descriptions. The admin's password is `Seed:AdminPassword`,
+  directory, and the admins and users groups with their descriptions. The admin signs in as `admin` (its username, not
+  its email). Its password is `Seed:AdminPassword`,
   at least 10 characters: keep it in a secret store or an environment variable, not in `appsettings.json`. The sample
   host keeps its own in `appsettings.Development.json`, so it starts only in Development until you give one.
 - **Two-factor:** `TwoFactor:Issuer` is the name authenticator apps show. By default it is your product's English name
