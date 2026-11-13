@@ -8,7 +8,7 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Volo.Abp.AspNetCore.Mvc" Version="$(AbpVersion)" />
     <PackageReference Include="Volo.Abp.EntityFrameworkCore" Version="$(AbpVersion)" />
-    <PackageReference Include="Casl.Net" Version="0.1.0" />
+    <PackageReference Include="Casl.Net" Version="0.2.0" />
   </ItemGroup>
 
 </Project>
