@@ -6,6 +6,23 @@ change the API.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-13
+
+Casl.Net 0.2.0 and its security fixes. No new tables or columns.
+
+### Security
+
+- **Casl.Net 0.2.0** (was 0.1.0): a null placeholder variable now fails an ability's build instead of matching every
+  unassigned row, `ToMongoQuery` keeps deny-overrides, `PermittedFields` leaves out fields a deny pattern names, `$regex`
+  decides the same in memory and on PostgreSQL, and a regex's time is bounded. `AbilityFactory` already builds each
+  grant on its own: one whose rules no longer build is logged and left out, and one carrying a deny rule denies
+  everything until it's fixed, so a broken grant can't widen access. A host that references Casl.Net itself should take
+  0.2.0 too.
+
+### Changed
+
+- The README says the seeded admin signs in as `admin`, not with its email.
+
 ## [0.3.0] - 2026-11-11
 
 What the host Guard came from built after 0.1.0, brought into the package: privacy (correction, erasure, retention,
