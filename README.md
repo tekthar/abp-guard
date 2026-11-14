@@ -17,8 +17,9 @@ instead of writing its own security. Nothing in it assumes one product: every na
 - **Sign-in:** web sessions with CSRF protection, rate limits, an OpenIddict server (password, refresh and code grants)
   with its token endpoint, OAuth apps with consent, dynamic client registration, and personal access tokens.
 - **Step-up by category:** sensitive actions ask for the password again within a window, and the dangerous categories
-  (roles, security settings, directories, apps…, the server operator's to choose) for a strong proof: a passkey, or the
-  password and an authenticator app. A personal access token never passes, unless the host's policy names its category.
+  (roles, security settings, directories, apps…, the server operator's to choose) for a strong proof: a passkey, or an
+  authenticator app's code (alone by default, or with the password). A personal access token never passes, unless the
+  host's policy names its category.
 - **Two-factor sign-in:** passkeys (WebAuthn), authenticator apps (TOTP), recovery codes and codes sent by email or a
   host's own channels, with Off, Optional, Required or Strong per group, and a rule the server's operator may turn on that
   every site admin has a passkey or an authenticator app.
@@ -103,6 +104,10 @@ Configure it in the `Guard` section (`GuardOptions`):
   `none`; by default `plugins, roles, security, accounts, directories, apps, service-accounts, admin-tokens, exports,
   backups, scripts, secrets, sites`. Your own marks name their categories, `[StepUp("publishing")]`, and may be listed too. It's
   the server operator's (environment `Guard__StepUp__Strong`): no page changes it.
+- **The app's code alone:** `StepUp:AppCodeAlone` (on by default; environment `Guard__StepUp__AppCodeAlone`) lets an
+  authenticator app's code alone step up, at either level: the session already proved the password, the code proves the
+  device. Too many wrong codes then end the session, as wrong passwords do. Set it to `false` to ask the password with the
+  code. A sent or recovery code never steps up alone.
 - **Site admins:** `Admins:RequireStrongFactor` (off by default; environment `Guard__Admins__RequireStrongFactor`) makes
   every site admin have a passkey or an authenticator app, within `Admins:GraceHours` (48) of when Guard first sees them
   without one; after it, signing in asks them to set one up first.

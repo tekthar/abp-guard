@@ -153,6 +153,9 @@ public sealed class SecondFactors(
     /// <summary>The emergency switch: nobody is asked for a second factor.</summary>
     public bool Disabled => IsDisabled(configuration, options.Value);
 
+    /// <summary>Whether the authenticator app's code alone steps up (Guard:StepUp:AppCodeAlone), while second factors are on.</summary>
+    public bool AppCodeAlone => options.Value.StepUp.AppCodeAlone && !Disabled;
+
     /// <summary>Whether second factors are switched off: Guard:TwoFactor:Disabled, or the TwoFactor feature off.</summary>
     public static bool IsDisabled(IConfiguration configuration, GuardOptions guard) => configuration.GetValue("Guard:TwoFactor:Disabled", false) || !guard.Features.TwoFactor;
 
@@ -386,6 +389,41 @@ public sealed class SecondFactors(
         return error;
     }
 
+    /// <summary>
+    /// A step-up with the authenticator app's code alone, where the operator allows it (<see cref="AppCodeAlone"/>): a
+    /// strong one, and the password level too. Null when it passes, else <c>account_inactive</c>, <c>second_factor_failed</c>
+    /// (a wrong code, or no app set up) or <c>too_many_attempts</c>; wrong codes count with the sign-in's.
+    /// </summary>
+    public async Task<string?> StepUpWithAppCodeAsync(Guid accountId, string code, string? ip, CancellationToken cancellationToken)
+    {
+        (string? error, string? username) = await guardDb.RunAsync<(string?, string?)>(async db =>
+        {
+            Account? account = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == accountId, cancellationToken);
+            if (account is null || account.Status != AccountStatus.Active)
+            {
+                return ("account_inactive", account?.Username);
+            }
+
+            // Taken before the check, as at sign-in; a right code gives it back.
+            if (!await limits.TryTakeAsync(WrongKey(accountId), MaxWrongCodes, WrongCodesWindow, cancellationToken))
+            {
+                return ("too_many_attempts", account.Username);
+            }
+
+            if (await CheckCodeAsync(db, accountId, SecondFactorKinds.App, code, strong: true, DateTime.UtcNow, cancellationToken))
+            {
+                await limits.ResetAsync(WrongKey(accountId), cancellationToken);
+                return (null, account.Username);
+            }
+
+            return ("second_factor_failed", account.Username);
+        }, requiresNew: true, cancellationToken);
+
+        await audit.WriteAsync(error is null ? SecurityAuditTypes.StepUpSucceeded : SecurityAuditTypes.SecondFactorFailed, username, accountId,
+            error is null ? SecondFactorKinds.App : $"step-up: app ({error})", ip, cancellationToken);
+        return error;
+    }
+
     /// <summary>The options for a step-up with one of the person's passkeys, for the session that asks; null when they have none.</summary>
     public Task<string?> StepUpOptionsAsync(Guid accountId, string binding, CancellationToken cancellationToken) =>
         passkeys.RequestOptionsAsync(accountId, Passkeys.StepUp, binding, cancellationToken);
@@ -423,9 +461,10 @@ public sealed class SecondFactors(
         {
             List<string> kinds = Disabled ? [] : await KindsAsync(db, accountId, cancellationToken);
             bool hasStrong = kinds.Exists(SecondFactorKinds.IsStrong);
+            bool appCodeAlone = AppCodeAlone && kinds.Contains(SecondFactorKinds.App);
             if (strong)
             {
-                return new Acting.StepUpMethods([.. kinds.Where(SecondFactorKinds.IsStrong)], hasStrong);
+                return new Acting.StepUpMethods([.. kinds.Where(SecondFactorKinds.IsStrong)], hasStrong, appCodeAlone);
             }
 
             List<string> methods = [.. kinds.Where(k => k == SecondFactorKinds.Passkey), .. kinds.Where(k => k == SecondFactorKinds.App), Acting.StepUpLevels.Password];
@@ -441,7 +480,7 @@ public sealed class SecondFactors(
                 methods.Add(SecondFactorKinds.Recovery);
             }
 
-            return new Acting.StepUpMethods(methods, hasStrong);
+            return new Acting.StepUpMethods(methods, hasStrong, appCodeAlone);
         }, cancellationToken: cancellationToken);
 
     /// <summary>Whether the person has a second factor set up (a step-up then asks for a code too).</summary>

@@ -29,6 +29,9 @@ public class GuardStepUpLevels(IOptions<GuardOptions> options, IConfiguration co
         return listed.Count > 0 ? StepUpStrongCategories.Parse(listed) : StepUpStrongCategories.Parse(guard.StepUp.Strong);
     }
 
+    /// <summary>Whether the authenticator app's code alone steps up (Guard:StepUp:AppCodeAlone).</summary>
+    public bool AppCodeAlone => secondFactors.AppCodeAlone;
+
     public bool IsStrong(string? category) => !secondFactors.Disabled && Strong.Includes(category);
 
     public Task<StepUpMethods> MethodsAsync(Guid accountId, string level, CancellationToken cancellationToken = default) =>

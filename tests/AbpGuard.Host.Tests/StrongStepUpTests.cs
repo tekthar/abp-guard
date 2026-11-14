@@ -15,7 +15,8 @@ namespace AbpGuard.Host.Tests;
 /// passkey alone or the password and the app, never the password alone or with a sent or recovery code, and tells someone
 /// with no strong factor to set one up; adding a factor is strong once the person has one, where a sign-in with a recovery
 /// code counts; a site admin's token is strong; every factor added or removed is told to the person; a token from the
-/// phone's second step with the app is strong too.
+/// phone's second step with the app is strong too. The app's code alone steps up strongly unless the operator sets
+/// Guard:StepUp:AppCodeAlone to false, and too many wrong codes then end the session.
 /// Needs Postgres: localhost:5432 (postgres/postgres), or the server GUARD_TEST_POSTGRES names.
 /// </summary>
 [Collection(SampleHost.Collection)]
@@ -59,6 +60,8 @@ public sealed class StrongStepUpTests : IAsyncLifetime
         {
             Directory.Delete(_mail, recursive: true);
         }
+
+        Environment.SetEnvironmentVariable("Guard__StepUp__AppCodeAlone", null);
     }
 
     [Fact]
@@ -85,6 +88,7 @@ public sealed class StrongStepUpTests : IAsyncLifetime
             Assert.Equal("strong", data.GetProperty("level").GetString());
             Assert.Equal("security", data.GetProperty("category").GetString());
             Assert.Equal(["app"], data.GetProperty("methods").EnumerateArray().Select(m => m.GetString()!).ToArray());
+            Assert.True(data.GetProperty("appCodeAlone").GetBoolean());
             Assert.Equal(600, data.GetProperty("maxAgeSeconds").GetInt32());
         }
 
@@ -122,6 +126,87 @@ public sealed class StrongStepUpTests : IAsyncLifetime
         Assert.True(strongFactor.GetProperty("has").GetBoolean());
         Assert.Equal(["app"], strongFactor.GetProperty("methods").EnumerateArray().Select(m => m.GetString()!).ToArray());
         Assert.Equal(JsonValueKind.Null, strongFactor.GetProperty("requiredBy").ValueKind);
+    }
+
+    [Fact]
+    public async Task The_apps_code_alone_is_a_strong_step_up_by_default()
+    {
+        HttpClient admin = Client();
+        string csrf = await SignInAsync(admin, "admin", AdminPassword);
+        object settings = new { retentionDays = 400, stepUpMinutes = 10 };
+        byte[] secret = await SetUpAppAsync(admin, csrf);
+
+        using (JsonDocument asked = await ErrorAsync(await SendAsync(admin, csrf, HttpMethod.Put, "/api/guard/security/settings", settings), HttpStatusCode.Forbidden, "step_up_required"))
+        {
+            JsonElement error = asked.RootElement.GetProperty("error");
+            Assert.True(error.GetProperty("data").GetProperty("appCodeAlone").GetBoolean());
+            Assert.Equal("Confirm it's you with your passkey or your authenticator app.", error.GetProperty("message").GetString());
+        }
+
+        // No code, then a wrong one: refused, and the session goes on.
+        await ErrorAsync(await SendAsync(admin, csrf, HttpMethod.Post, "/api/guard/session/step-up", new { method = "app" }), HttpStatusCode.BadRequest, "second_factor_required");
+        await ErrorAsync(await SendAsync(admin, csrf, HttpMethod.Post, "/api/guard/session/step-up", new { method = "app", code = "000000" }), HttpStatusCode.BadRequest,
+            "second_factor_failed");
+
+        // The right code alone: strong, and the strong action passes; the settings say the operator allows it.
+        HttpResponseMessage stepped = await SendAsync(admin, csrf, HttpMethod.Post, "/api/guard/session/step-up",
+            new { method = "app", code = Totp.Code(secret, Totp.StepAt(DateTimeOffset.UtcNow.AddSeconds(30))) });
+        Assert.Equal(HttpStatusCode.OK, stepped.StatusCode);
+        using (JsonDocument proof = JsonDocument.Parse(await stepped.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal(proof.RootElement.GetProperty("authTime").GetDateTime(), proof.RootElement.GetProperty("strongAuthTime").GetDateTime());
+        }
+
+        HttpResponseMessage saved = await SendAsync(admin, csrf, HttpMethod.Put, "/api/guard/security/settings", settings);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        using JsonDocument shown = JsonDocument.Parse(await saved.Content.ReadAsStringAsync());
+        Assert.True(shown.RootElement.GetProperty("stepUpAppCodeAlone").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Too_many_wrong_codes_alone_end_the_session()
+    {
+        await PersonAsync("ana");
+        HttpClient browser = Client();
+        string csrf = await SignInAsync(browser, "ana", Password);
+        await SetUpAppAsync(browser, csrf);
+
+        // Ten wrong codes are refused with the session going on; the next ends it, as too many wrong passwords do.
+        for (int i = 0; i < 10; i++)
+        {
+            await ErrorAsync(await SendAsync(browser, csrf, HttpMethod.Post, "/api/guard/session/step-up", new { method = "app", code = "000000" }), HttpStatusCode.BadRequest,
+                "second_factor_failed");
+        }
+
+        await ErrorAsync(await SendAsync(browser, csrf, HttpMethod.Post, "/api/guard/session/step-up", new { method = "app", code = "000000" }), HttpStatusCode.Unauthorized,
+            "session_ended");
+        Assert.Equal(HttpStatusCode.Unauthorized, (await browser.GetAsync("/api/guard/me")).StatusCode);
+    }
+
+    [Fact]
+    public async Task With_the_apps_code_alone_turned_off_it_needs_the_password_too()
+    {
+        Environment.SetEnvironmentVariable("Guard__StepUp__AppCodeAlone", "false");
+        HttpClient admin = Client();
+        string csrf = await SignInAsync(admin, "admin", AdminPassword);
+        object settings = new { retentionDays = 400, stepUpMinutes = 10 };
+        byte[] secret = await SetUpAppAsync(admin, csrf);
+
+        using (JsonDocument asked = await ErrorAsync(await SendAsync(admin, csrf, HttpMethod.Put, "/api/guard/security/settings", settings), HttpStatusCode.Forbidden, "step_up_required"))
+        {
+            JsonElement error = asked.RootElement.GetProperty("error");
+            Assert.False(error.GetProperty("data").GetProperty("appCodeAlone").GetBoolean());
+            Assert.Equal("Confirm it's you with your passkey, or your password and authenticator app.", error.GetProperty("message").GetString());
+        }
+
+        string code = Totp.Code(secret, Totp.StepAt(DateTimeOffset.UtcNow.AddSeconds(30)));
+        await ErrorAsync(await SendAsync(admin, csrf, HttpMethod.Post, "/api/guard/session/step-up", new { method = "app", code }), HttpStatusCode.BadRequest, "invalid_request");
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(admin, csrf, HttpMethod.Post, "/api/guard/session/step-up", new { password = AdminPassword, method = "app", code })).StatusCode);
+
+        HttpResponseMessage saved = await SendAsync(admin, csrf, HttpMethod.Put, "/api/guard/security/settings", settings);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        using JsonDocument shown = JsonDocument.Parse(await saved.Content.ReadAsStringAsync());
+        Assert.False(shown.RootElement.GetProperty("stepUpAppCodeAlone").GetBoolean());
     }
 
     [Fact]

@@ -14,7 +14,8 @@ public interface IStepUpPolicy
 
 /// <summary>
 /// A step-up's levels: <c>password</c> (the password again, with a code of the person's second factor when they have one)
-/// and <c>strong</c> (a passkey alone, or the password and an authenticator app's code).
+/// and <c>strong</c> (a passkey alone, or an authenticator app's code: alone by default, with the password where the
+/// operator sets <c>Guard:StepUp:AppCodeAlone</c> to false). Either strong proof passes the password level too.
 /// </summary>
 public static class StepUpLevels
 {
@@ -119,8 +120,17 @@ public sealed record StepUpStrongCategories(bool All, IReadOnlySet<string> Categ
     public List<string> Shown() => All ? ["*"] : [.. Categories.Order(StringComparer.Ordinal)];
 }
 
-/// <summary>The ways a person may step up, best first (<c>passkey</c>, <c>app</c>, <c>password</c>, <c>email</c>…), and whether any is strong.</summary>
-public sealed record StepUpMethods(IReadOnlyList<string> Methods, bool HasStrong);
+/// <summary>
+/// The ways a person may step up, best first (<c>passkey</c>, <c>app</c>, <c>password</c>, <c>email</c>…), whether any is
+/// strong, and whether the app's code passes alone (without the password; the operator's <c>Guard:StepUp:AppCodeAlone</c>).
+/// </summary>
+public sealed record StepUpMethods(IReadOnlyList<string> Methods, bool HasStrong, bool AppCodeAlone)
+{
+    /// <summary>The ways, with the app's code asked with the password (as before 0.7.1).</summary>
+    public StepUpMethods(IReadOnlyList<string> methods, bool hasStrong) : this(methods, hasStrong, false)
+    {
+    }
+}
 
 /// <summary>What a step-up asks of a person: which categories are strong, and the ways the person has. Guard keeps it.</summary>
 public interface IStepUpLevels
@@ -222,11 +232,14 @@ public class StepUpGuard(ActingContext acting, IStepUpPolicy policy, IStepUpLeve
                 .WithData("category", category!);
         }
 
-        throw new UserFriendlyException(strong ? "Confirm it's you with your passkey, or your password and authenticator app." : "Confirm your password to do this.",
-                GuardErrorCodes.StepUpRequired)
+        string message = !strong ? "Confirm your password to do this."
+            : methods.AppCodeAlone ? "Confirm it's you with your passkey or your authenticator app."
+            : "Confirm it's you with your passkey, or your password and authenticator app.";
+        throw new UserFriendlyException(message, GuardErrorCodes.StepUpRequired)
             .WithData("level", strong ? StepUpLevels.Strong : StepUpLevels.Password)
             .WithData("category", category!)
             .WithData("methods", methods.Methods.ToArray())
+            .WithData("appCodeAlone", methods.AppCodeAlone)
             .WithData("maxAgeSeconds", (int)window.TotalSeconds);
     }
 }

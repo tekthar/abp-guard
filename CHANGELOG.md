@@ -6,6 +6,25 @@ change the API.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-14
+
+An authenticator app's code alone is a strong step-up, as the operator may choose. No migration.
+
+### Added
+
+- **`Guard:StepUp:AppCodeAlone`** (environment `Guard__StepUp__AppCodeAlone`), on by default: the app's code alone
+  steps up at either level, a strong one (the session already proved the password; the code proves the device). Set to
+  `false`, a step-up with the app asks the password too, as in 0.7.0. A sent or recovery code never steps up alone.
+  - `POST session/step-up` takes `{ method: 'app', code }` with no password, and marks `authTime` and `strongAuthTime`,
+    as a passkey does. The token endpoint's step-up takes `step_up_method=app` and `step_up_code` with no
+    `step_up_password`.
+  - Too many wrong codes alone (the sign-in's limit, ten in 15 minutes) end the session, as too many wrong passwords do:
+    401 `session_ended`, and the refresh token is revoked. A step-up by someone whose account is no longer active ends it too.
+  - `step_up_required`'s data says `appCodeAlone: true|false`, so a dialog shows the code alone or the password and the
+    code. The strong message reads "Confirm it's you with your passkey or your authenticator app." when it's on.
+  - The security settings show `stepUpAppCodeAlone`, read-only.
+  - `StepUpMethods` has `AppCodeAlone`; its two-argument constructor stays, with it false.
+
 ## [0.7.0] - 2026-11-14
 
 Passkeys, a strong step-up for the dangerous categories, and a rule that every site admin has a strong factor. Two

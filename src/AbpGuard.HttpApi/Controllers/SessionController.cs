@@ -215,7 +215,9 @@ public class SessionController(AuthService auth, WebSessions sessions, GuardDb g
     /// A step-up: the password again, checked by the account's directory, marks the session for the site's
     /// step-up minutes. A wrong password answers 400 and the session goes on; too many end it (401, cookies cleared). With
     /// the authenticator app's code too, or with a passkey alone (<c>method: 'passkey'</c> and its answer), the step-up is
-    /// strong: the answer's <c>strongAuthTime</c> is now as well.
+    /// strong: the answer's <c>strongAuthTime</c> is now as well. Where the operator allows it (<c>Guard:StepUp:AppCodeAlone</c>,
+    /// on by default) the app's code alone (<c>method: 'app'</c>, <c>code</c>, no password) is a strong step-up too; too
+    /// many wrong codes then end the session, as wrong passwords do.
     /// </summary>
     [HttpPost("step-up")]
     [Authorize]
@@ -240,6 +242,34 @@ public class SessionController(AuthService auth, WebSessions sessions, GuardDb g
             if (refused is not null)
             {
                 return refused == "too_many_attempts" ? Error(429, "too_many_attempts", "Too many tries. Try again in 15 minutes.") : PasskeyRejected();
+            }
+
+            return await sessions.MarkSteppedUpAsync(sessionId, strong: true, cancellationToken) is { } proved
+                ? Ok(new SessionStepUpDto(proved.AuthTime, proved.StrongAuthTime))
+                : Error(401, "session_ended", "Your session has ended. Sign in again.");
+        }
+
+        // The authenticator app's code alone, where the operator allows it: the session proved the password, the code the device.
+        if (input.Method == Domain.SecondFactorKinds.App && input.Password is not { Length: > 0 } && secondFactors.AppCodeAlone)
+        {
+            if (input.Code is not { Length: > 0 } appCode)
+            {
+                return Error(400, "second_factor_required", "Enter the code of your authenticator app.");
+            }
+
+            string? refused = await secondFactors.StepUpWithAppCodeAsync(CurrentAccountId, appCode, ClientIp, cancellationToken);
+            if (refused is "too_many_attempts" or "account_inactive")
+            {
+                await sessions.EndAsync(sessionId, "step-up", cancellationToken);
+                WebSessionHandler.Clear(HttpContext);
+                return Error(401, "session_ended", refused == "too_many_attempts"
+                    ? "Too many wrong codes: the session has ended. Sign in again."
+                    : "Your session has ended. Sign in again.");
+            }
+
+            if (refused is not null)
+            {
+                return SecondStepError(refused);
             }
 
             return await sessions.MarkSteppedUpAsync(sessionId, strong: true, cancellationToken) is { } proved

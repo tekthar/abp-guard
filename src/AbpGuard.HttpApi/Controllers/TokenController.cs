@@ -162,7 +162,38 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
             DateTimeOffset? recoveryAuthTime = long.TryParse(refreshed.GetClaim(AbpGuard.Acting.ActingContext.RecoveryAuthTimeClaim), out long recoverySeconds)
                 ? DateTimeOffset.FromUnixTimeSeconds(recoverySeconds)
                 : null;
-            if (request.GetParameter(StepUpParameter)?.ToString() is { } password)
+            string? stepUpMethod = request.GetParameter(StepUpMethodParameter)?.ToString();
+            string? stepUpCode = request.GetParameter(StepUpCodeParameter)?.ToString();
+            if (request.GetParameter(StepUpParameter)?.ToString() is null && stepUpMethod == Domain.SecondFactorKinds.App && stepUpCode is { Length: > 0 }
+                && secondFactors.AppCodeAlone)
+            {
+                // The authenticator app's code alone, where the operator allows it: strong, and the password level too.
+                if (request.ClientId != options.Value.Clients.Web)
+                {
+                    return Refuse($"Only {options.Value.Texts.Product()}'s own web app can ask for a step-up.", Errors.UnauthorizedClient);
+                }
+
+                string? refused = await secondFactors.StepUpWithAppCodeAsync(account.Id, stepUpCode, HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+                if (refused is "too_many_attempts" or "account_inactive")
+                {
+                    if (refreshed.GetTokenId() is { } tokenId && await tokens.FindByIdAsync(tokenId, cancellationToken) is { } token)
+                    {
+                        await tokens.TryRevokeAsync(token, cancellationToken);
+                    }
+
+                    return Refuse(refused == "too_many_attempts" ? "Too many wrong codes: the session has ended. Sign in again." : "Your session has ended. Sign in again.",
+                        SessionEndedError);
+                }
+
+                if (refused is not null)
+                {
+                    return Refuse("The code is incorrect.", SecondFactorFailedError);
+                }
+
+                authTime = DateTimeOffset.UtcNow;
+                strongAuthTime = authTime;
+            }
+            else if (request.GetParameter(StepUpParameter)?.ToString() is { } password)
             {
                 if (request.ClientId != options.Value.Clients.Web)
                 {
@@ -183,8 +214,8 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
                 }
 
                 // A person with a second factor proves it again too: step_up_method and step_up_code. The app's code makes it strong.
-                Services.TwoFactor.StepUpProof proof = await secondFactors.StepUpAsync(account.Id, request.GetParameter(StepUpMethodParameter)?.ToString(),
-                    request.GetParameter(StepUpCodeParameter)?.ToString(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+                Services.TwoFactor.StepUpProof proof = await secondFactors.StepUpAsync(account.Id, stepUpMethod, stepUpCode,
+                    HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
                 if (proof.Error is { } error)
                 {
                     return Refuse(error switch

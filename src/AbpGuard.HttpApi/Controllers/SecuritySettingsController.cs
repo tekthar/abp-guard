@@ -22,6 +22,12 @@ public sealed record SecuritySettingsDto(int RetentionDays, int MinRetentionDays
 {
     public List<string> StepUpStrong { get; init; } = [];
 
+    /// <summary>
+    /// Whether an authenticator app's code alone steps up, read-only: the operator's <c>Guard:StepUp:AppCodeAlone</c>
+    /// (environment <c>Guard__StepUp__AppCodeAlone</c>), on unless set to false.
+    /// </summary>
+    public bool StepUpAppCodeAlone { get; init; } = true;
+
     /// <summary>The site admins' rule, read-only: the server's operator sets it in the environment, no page.</summary>
     public AdminsStrongFactorDto AdminsStrongFactor { get; init; } = new(false, 48, "environment", GuardAdminsOptions.RequireStrongFactorVariable);
 }
@@ -110,6 +116,7 @@ public class SecuritySettingsController(GuardDb guardDb, SecurityLog audit, Guar
         s.TokenMaxDays, SecuritySettings.MinTokenMaxDays, SecuritySettings.MaxTokenMaxDays, s.AppsMayRegister)
     {
         StepUpStrong = levels.Strong.Shown(),
+        StepUpAppCodeAlone = levels.AppCodeAlone,
         AdminsStrongFactor = new(admins.Required, (int)admins.Grace.TotalHours, "environment", GuardAdminsOptions.RequireStrongFactorVariable),
     };
 }

@@ -89,11 +89,22 @@ public sealed class GuardAdminsOptions
 }
 
 /// <summary>
-/// Which step-up categories ask for a strong proof (a passkey, or the password and an authenticator app):
-/// Guard:StepUp:Strong (environment Guard__StepUp__Strong), the server operator's, never a page's.
+/// Which step-up categories ask for a strong proof (a passkey, or an authenticator app's code):
+/// Guard:StepUp:Strong (environment Guard__StepUp__Strong), the server operator's, never a page's; and whether the app's
+/// code alone is that proof (Guard:StepUp:AppCodeAlone).
 /// </summary>
 public sealed class GuardStepUpOptions
 {
+    /// <summary>The variable that sets <see cref="AppCodeAlone"/>.</summary>
+    public const string AppCodeAloneVariable = "Guard__StepUp__AppCodeAlone";
+
+    /// <summary>
+    /// Whether an authenticator app's code alone steps up, at either level (the session already proved the password; the
+    /// code proves the device). True by default; false asks the password with the code, as 0.7.0 did. A sent or recovery
+    /// code never steps up alone.
+    /// </summary>
+    public bool AppCodeAlone { get; set; } = true;
+
     /// <summary>
     /// A comma-separated list of categories, <c>*</c> for every one, or <c>none</c> for none (every step-up at the password
     /// level, as before 0.7.0). Null or empty: <see cref="Acting.StepUpCategories.DefaultStrong"/>.
