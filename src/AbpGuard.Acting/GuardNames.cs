@@ -81,6 +81,12 @@ public sealed class GuardNames
     /// </summary>
     public string FeedSignatureHeader { get; set; } = "X-Guard-Signature";
 
+    /// <summary>
+    /// Headers the feed signs each batch in as well, with the same value: the names a host used before it renamed
+    /// <see cref="FeedSignatureHeader"/>, so a receiver set up under one of them keeps working while it moves.
+    /// </summary>
+    public List<string> FormerFeedSignatureHeaders { get; set; } = [];
+
     /// <summary>A Data Protection purpose under <see cref="ProtectionPrefix"/>.</summary>
     public string Purpose(string name) => $"{ProtectionPrefix}.{name}";
 

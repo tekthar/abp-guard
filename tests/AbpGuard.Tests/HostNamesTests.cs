@@ -33,7 +33,21 @@ public class HostNamesTests
         Assert.Equal(("Guard:Forbidden", "Guard:TooManyRequests"), (GuardErrorCodes.Forbidden, GuardErrorCodes.TooManyRequests));
         Assert.Equal("X-Guard-Signature", names.FeedSignatureHeader);
         Assert.Equal(SecurityFeed.SignatureHeader, names.FeedSignatureHeader);
+        Assert.Empty(names.FormerFeedSignatureHeaders);
         Assert.Null(names.Former);
+    }
+
+    [Fact]
+    public void The_feed_signs_under_the_hosts_former_headers_too_with_the_same_value()
+    {
+        byte[] body = "[{\"id\":1}]"u8.ToArray();
+        DateTimeOffset at = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000);
+
+        Dictionary<string, string> headers = SecurityFeed.Sign("secret", body, at, "X-Guard-Signature", ["X-Shop-Signature", "x-guard-signature", " ", "X-Old-Signature"]);
+
+        Assert.Equal(["X-Guard-Signature", "X-Shop-Signature", "X-Old-Signature"], headers.Keys.ToArray());
+        Assert.All(headers.Values, v => Assert.Equal(headers["X-Guard-Signature"], v));
+        Assert.Equal(SecurityFeed.Sign("secret", body, at)[SecurityFeed.SignatureHeader], headers["X-Shop-Signature"]);
     }
 
     [Fact]
@@ -51,6 +65,7 @@ public class HostNamesTests
             ["Guard:Names:AppAccessProperty"] = "shop_access", ["Guard:Names:ReadScope"] = "shop.read",
             ["Guard:Names:SecondFactorGrantType"] = "urn:shop:grant-type:second-factor", ["Guard:Names:ProtectionPrefix"] = "Shop.Guard",
             ["Guard:Names:ImportedDirectorySalt"] = "shop-imported-directory:", ["Guard:Names:FeedSignatureHeader"] = "X-Shop-Signature",
+            ["Guard:Names:FormerFeedSignatureHeaders:0"] = "X-Old-Signature",
             ["Guard:Names:Former:TokenClaim"] = "old_token", ["Guard:Names:Former:Scopes:old.api"] = "shop.api",
             ["Guard:Pages:SecurityLog"] = "/{lang}/admin/security-log",
         }).Build();
@@ -73,6 +88,9 @@ public class HostNamesTests
         Assert.Equal(("X-Shop-Signature", "/{lang}/admin/security-log"), (names.FeedSignatureHeader, options.Pages.SecurityLog));
         Assert.Equal(("old_token", "shop.api"), (names.Former?.TokenClaim, names.Former?.Scopes["old.api"]));
         Assert.True(SecurityFeed.Sign("secret", [], header: names.FeedSignatureHeader).ContainsKey("X-Shop-Signature"));
+        Assert.Equal(["X-Old-Signature"], names.FormerFeedSignatureHeaders);
+        Assert.Equal(["X-Shop-Signature", "X-Old-Signature"],
+            SecurityFeed.Sign("secret", [], header: names.FeedSignatureHeader, alsoUnder: names.FormerFeedSignatureHeaders).Keys.ToArray());
     }
 
     [Fact]

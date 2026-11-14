@@ -76,7 +76,9 @@ What each keeps working:
   Keep `SetApplicationName(...)` on the Data Protection builder as it was too.
 - **`ImportedDirectorySalt`:** imported directories keep the ids they were given.
 - **`FeedSignatureHeader`:** a receiver of the security log's feed set up under the old name keeps finding the
-  signature where it looks for it (from 0.3.0, for a host whose own Guard had the feed before).
+  signature where it looks for it (from 0.3.0, for a host whose own Guard had the feed before). To move to a new
+  name, set it here and list the old one in `FormerFeedSignatureHeaders` (from 0.4.0): each batch is signed under
+  both, with the same value, until the receivers have moved.
 - **`AdminsGroupName`, `Seed`, `Texts:ProductName`:** names Guard shows and the product named in its mails. The groups
   themselves are found by id, so a site already seeded keeps its rights either way.
 

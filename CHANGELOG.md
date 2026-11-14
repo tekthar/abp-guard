@@ -6,6 +6,17 @@ change the API.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-14
+
+The security log's feed can sign under a host's former header names too. No new tables or columns.
+
+### Added
+
+- **`GuardNames.FormerFeedSignatureHeaders`** (`Guard:Names:FormerFeedSignatureHeaders`, empty by default): each
+  batch's signature goes under these headers as well as `FeedSignatureHeader`, with the same value, so a host can
+  rename the header and a receiver set up under the old name keeps working while it moves. `SecurityFeed.Sign` takes
+  them as `alsoUnder`; a name given twice, in any case, or empty is left out.
+
 ## [0.3.1] - 2026-11-13
 
 Casl.Net 0.2.0 and its security fixes. No new tables or columns.

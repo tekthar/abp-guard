@@ -24,7 +24,8 @@ public sealed record SecurityFeedSecretDto(string Secret);
 /// The security log as a feed (PDPL): a site admin sets an address (a SIEM's, a log store's), and each
 /// minute the events since the last batch go there as a JSON array, oldest first, signed with the site's secret:
 /// <c>X-Guard-Signature: t={unix seconds},v1={hex HMAC-SHA256 of "t.body"}</c> (the header's name is the host's,
-/// GuardNames.FeedSignatureHeader). The secret is kept protected (Data Protection) and shown once when made. A batch
+/// GuardNames.FeedSignatureHeader, and the same value goes under each of GuardNames.FormerFeedSignatureHeaders). The
+/// secret is kept protected (Data Protection) and shown once when made. A batch
 /// that doesn't arrive is sent again until it does; the page says since when it fails.
 /// </summary>
 public sealed class SecurityFeed(GuardDb guardDb, IDataProtectionProvider protection, IOptions<GuardNames> names, ISecurityFeedSender sender,
@@ -117,7 +118,7 @@ public sealed class SecurityFeed(GuardDb guardDb, IDataProtectionProvider protec
                 id = e.Id, time = e.Time, type = e.Type, username = e.Username, accountId = e.AccountId, actingAccountId = e.ActingAccountId, actingMode = e.ActingMode,
                 targetType = e.TargetType, targetId = e.TargetId, targetName = e.TargetName, detail = e.Detail, ip = e.Ip,
             }), Json);
-            SecurityFeedResult result = await sender.SendAsync(new Uri(feed.Url!), body, Sign(Protector.Unprotect(feed.ProtectedSecret!), body, header: names.Value.FeedSignatureHeader), ct);
+            SecurityFeedResult result = await sender.SendAsync(new Uri(feed.Url!), body, Sign(Protector.Unprotect(feed.ProtectedSecret!), body, header: names.Value.FeedSignatureHeader, alsoUnder: names.Value.FormerFeedSignatureHeaders), ct);
             await guardDb.RunAsync(async db =>
             {
                 SecurityFeedSettings f = await LoadAsync(db, ct);
@@ -146,13 +147,26 @@ public sealed class SecurityFeed(GuardDb guardDb, IDataProtectionProvider protec
         }
     }
 
-    /// <summary>The signature headers of a body, for a secret: what a receiver computes to know it's the site's.</summary>
-    public static Dictionary<string, string> Sign(string secret, byte[] body, DateTimeOffset? at = null, string header = SignatureHeader)
+    /// <summary>
+    /// The signature headers of a body, for a secret: what a receiver computes to know it's the site's. The same value
+    /// goes under <paramref name="header"/> and each of <paramref name="alsoUnder"/> (a host's former names).
+    /// </summary>
+    public static Dictionary<string, string> Sign(string secret, byte[] body, DateTimeOffset? at = null, string header = SignatureHeader,
+        IEnumerable<string>? alsoUnder = null)
     {
         string t = (at ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
         byte[] signed = [.. Encoding.UTF8.GetBytes(t + "."), .. body];
         string v1 = Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), signed));
-        return new Dictionary<string, string> { [header] = $"t={t},v1={v1}" };
+        Dictionary<string, string> headers = new(StringComparer.OrdinalIgnoreCase) { [header] = $"t={t},v1={v1}" };
+        foreach (string former in alsoUnder ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(former))
+            {
+                headers.TryAdd(former.Trim(), headers[header]);
+            }
+        }
+
+        return headers;
     }
 
     private static async Task<SecurityFeedSettings> LoadAsync(Data.GuardDbContext db, CancellationToken ct) =>
