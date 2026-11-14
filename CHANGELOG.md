@@ -25,6 +25,8 @@ columns, and the routes, shapes and behaviour are the same.
 - Reference `AbpGuard.HttpApi` 0.5.0 (it brings `AbpGuard`), and put `typeof(AbpGuardHttpApiModule)` in your module's
   `[DependsOn]` in place of, or beside, `typeof(AbpGuardModule)`. Without it, the host has no sign-in, `/connect/*` or
   `api/guard/*` endpoints of Guard's.
+- Remove `ConventionalControllers.Create(typeof(AbpGuardModule).Assembly)` if your module has it: that assembly
+  holds no controllers now, and `AbpGuardHttpApiModule` adds its own to MVC.
 - Keep every AbpGuard package at the same version (`AbpGuard`, `AbpGuard.Contracts`, `AbpGuard.Acting`,
   `AbpGuard.HttpApi`).
 

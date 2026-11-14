@@ -1,17 +1,16 @@
 using Volo.Abp;
-using Volo.Abp.AspNetCore.Mvc;
 using Volo.Abp.Autofac;
 using Volo.Abp.Modularity;
 
 namespace AbpGuard.SampleHost;
 
-/// <summary>Guard's module and ABP's, and Guard's controllers: all a host needs.</summary>
+/// <summary>
+/// Guard's module and ABP's, and Guard's controllers: all a host needs. <see cref="AbpGuardHttpApiModule"/> adds its
+/// controllers to MVC itself, so a host calls no <c>ConventionalControllers.Create</c> for them.
+/// </summary>
 [DependsOn(typeof(AbpAutofacModule), typeof(AbpGuardHttpApiModule))]
 public class SampleHostModule : AbpModule
 {
-    public override void ConfigureServices(ServiceConfigurationContext context) =>
-        Configure<AbpAspNetCoreMvcOptions>(options => options.ConventionalControllers.Create(typeof(AbpGuardModule).Assembly));
-
     public override void OnApplicationInitialization(ApplicationInitializationContext context)
     {
         IApplicationBuilder app = context.GetApplicationBuilder();
