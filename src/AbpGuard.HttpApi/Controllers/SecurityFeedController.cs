@@ -18,7 +18,7 @@ public class SecurityFeedController(SecurityFeed feed, SecurityLog audit) : Guar
     public Task<SecurityFeedDto> Get(CancellationToken cancellationToken) => feed.GetAsync(cancellationToken);
 
     [HttpPut]
-    [StepUp]
+    [StepUp(StepUpCategories.Security)]
     public async Task<SecurityFeedDto> Save([FromBody] SecurityFeedInput input, CancellationToken cancellationToken)
     {
         SecurityFeedDto saved = await feed.SaveAsync(input, cancellationToken);
@@ -27,7 +27,7 @@ public class SecurityFeedController(SecurityFeed feed, SecurityLog audit) : Guar
     }
 
     [HttpPost("secret")]
-    [StepUp]
+    [StepUp(StepUpCategories.Security)]
     public async Task<SecurityFeedSecretDto> NewSecret(CancellationToken cancellationToken)
     {
         SecurityFeedSecretDto secret = await feed.NewSecretAsync(cancellationToken);

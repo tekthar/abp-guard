@@ -105,6 +105,6 @@ public class SignUpSettingsController(SelfService self) : GuardControllerBase
     public Task<SignUpSettingsDto> Get(CancellationToken cancellationToken) => self.SettingsAsync(cancellationToken);
 
     [HttpPut]
-    [StepUp]
+    [StepUp(StepUpCategories.Security)]
     public Task<SignUpSettingsDto> Save([FromBody] SignUpSettingsInput input, CancellationToken cancellationToken) => self.SaveSettingsAsync(input, cancellationToken);
 }

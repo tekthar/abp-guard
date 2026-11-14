@@ -24,7 +24,7 @@ public class ErasuresController(PersonalDataErasures erasures, SecurityLog audit
     public Task<ErasureDto?> MyRequest(CancellationToken cancellationToken) => erasures.LatestOfAsync(CurrentAccountId, cancellationToken);
 
     [HttpPost("me/erasure-request")]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task<ErasureDto> Ask([FromBody] ErasureRequestInput? input, CancellationToken cancellationToken)
     {
         ErasureDto request = await erasures.RequestAsync(CurrentAccountId, input?.Reason, cancellationToken);
@@ -41,7 +41,7 @@ public class ErasuresController(PersonalDataErasures erasures, SecurityLog audit
     /// <summary>Declining keeps what the person asked to be erased, so it asks for the password again.</summary>
     [HttpPost("privacy/erasures/{id:guid}/decline")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task<ErasureDto> Decline(Guid id, [FromBody] ErasureDeclineInput input, CancellationToken cancellationToken)
     {
         string reason = (input.Reason ?? "").Trim();
@@ -59,7 +59,7 @@ public class ErasuresController(PersonalDataErasures erasures, SecurityLog audit
     /// <summary>Runs the stores an erasure hasn't finished: one failed, or its plugin was off.</summary>
     [HttpPost("privacy/erasures/{id:guid}/resume")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task<ErasureDto> Resume(Guid id, CancellationToken cancellationToken)
     {
         ErasureDto erasure = await erasures.ResumeAsync(id, cancellationToken);
@@ -71,7 +71,7 @@ public class ErasuresController(PersonalDataErasures erasures, SecurityLog audit
     /// <summary>Goes on without a plugin's store the erasure waits for, with why: the plugin is gone for good, or won't run.</summary>
     [HttpPost("privacy/erasures/{id:guid}/stores/{store}/skip")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task<ErasureDto> SkipStore(Guid id, string store, [FromBody] ErasureDeclineInput input, CancellationToken cancellationToken)
     {
         ErasureDto erasure = await erasures.SkipStoreAsync(id, store, CurrentAccountId, input.Reason, cancellationToken);
@@ -87,7 +87,7 @@ public class ErasuresController(PersonalDataErasures erasures, SecurityLog audit
 
     [HttpPost("accounts/{id:guid}/erasure")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task<ErasureDto> EraseAccount(Guid id, CancellationToken cancellationToken)
     {
         ErasureDto erasure = await erasures.EraseAccountAsync(id, CurrentAccountId, cancellationToken);
@@ -103,7 +103,7 @@ public class ErasuresController(PersonalDataErasures erasures, SecurityLog audit
 
     [HttpPost("privacy/people/erasure")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task<ErasureDto> EraseOutside([FromBody] OutsideErasureInput input, CancellationToken cancellationToken)
     {
         ErasureDto erasure = await erasures.EraseOutsideAsync(PersonalDataSubject.Outside(input.Email, input.Phone), CurrentAccountId, cancellationToken);
@@ -121,7 +121,7 @@ public class ErasuresController(PersonalDataErasures erasures, SecurityLog audit
     /// <summary>A hold stops the person's erasure until it's released, so it asks for the password again.</summary>
     [HttpPost("privacy/holds")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task<LegalHoldDto> Hold([FromBody] LegalHoldInput input, CancellationToken cancellationToken)
     {
         LegalHoldDto hold = await erasures.HoldAsync(input, CurrentAccountId, cancellationToken);
@@ -132,7 +132,7 @@ public class ErasuresController(PersonalDataErasures erasures, SecurityLog audit
     /// <summary>Releasing a hold lets the person be erased again, so it asks for the password.</summary>
     [HttpPost("privacy/holds/{id:guid}/release")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task<LegalHoldDto> Release(Guid id, CancellationToken cancellationToken)
     {
         LegalHoldDto hold = await erasures.ReleaseAsync(id, CurrentAccountId, cancellationToken);

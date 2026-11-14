@@ -21,7 +21,7 @@ public class RetentionController(PersonalDataRetention retention, SecurityLog au
     public Task<RetentionDto> Get(CancellationToken cancellationToken) => retention.GetAsync(cancellationToken);
 
     [HttpPut]
-    [StepUp]
+    [StepUp(StepUpCategories.Security)]
     public async Task<RetentionDto> Save([FromBody] RetentionInput input, CancellationToken cancellationToken)
     {
         RetentionDto saved = await retention.SaveAsync(input, CurrentAccountId, cancellationToken);
@@ -31,7 +31,7 @@ public class RetentionController(PersonalDataRetention retention, SecurityLog au
 
     /// <summary>Sweeps now, waiting for another server's sweep to end; refused until the periods are confirmed.</summary>
     [HttpPost("sweep")]
-    [StepUp]
+    [StepUp(StepUpCategories.Security)]
     public async Task<Dictionary<string, int>> Sweep(CancellationToken cancellationToken) =>
         await retention.SweepAsync(wait: true, cancellationToken)
         ?? throw new UserFriendlyException("Confirm the retention periods first: until then nothing is swept.", "not_confirmed");

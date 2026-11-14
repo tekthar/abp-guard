@@ -14,10 +14,14 @@ namespace AbpGuard.Controllers;
 /// <summary>
 /// The site's security settings, with their limits: how long the security audit keeps events, how
 /// recently a person must have signed in or stepped up to do something sensitive, and the longest a personal access
-/// token may live.
+/// token may live. <see cref="StepUpStrong"/> is read-only: the step-up categories that ask for a strong proof, as the server's
+/// operator set them (<c>Guard:StepUp:Strong</c>; <c>["*"]</c> for every one).
 /// </summary>
 public sealed record SecuritySettingsDto(int RetentionDays, int MinRetentionDays, int MaxRetentionDays, int StepUpMinutes, int MinStepUpMinutes, int MaxStepUpMinutes,
-    int TokenMaxDays, int MinTokenMaxDays, int MaxTokenMaxDays, bool AppsMayRegister = false);
+    int TokenMaxDays, int MinTokenMaxDays, int MaxTokenMaxDays, bool AppsMayRegister = false)
+{
+    public List<string> StepUpStrong { get; init; } = [];
+}
 
 /// <summary>The settings to save; TokenMaxDays left out keeps what's saved.</summary>
 public sealed record SecuritySettingsInput([property: JsonRequired] int RetentionDays, [property: JsonRequired] int StepUpMinutes, int? TokenMaxDays = null,
@@ -29,14 +33,14 @@ public sealed record SecuritySettingsInput([property: JsonRequired] int Retentio
 /// </summary>
 [Route("api/guard/security/settings")]
 [Authorize(Policy = GuardPolicies.Admin)]
-public class SecuritySettingsController(GuardDb guardDb, SecurityLog audit) : GuardControllerBase
+public class SecuritySettingsController(GuardDb guardDb, SecurityLog audit, GuardStepUpLevels levels) : GuardControllerBase
 {
     [HttpGet]
     public Task<SecuritySettingsDto> Get(CancellationToken cancellationToken) =>
         guardDb.RunAsync(async db => ToDto(await LoadAsync(db, cancellationToken)), cancellationToken: cancellationToken);
 
     [HttpPut]
-    [StepUp]
+    [StepUp(StepUpCategories.Security)]
     public Task<SecuritySettingsDto> Save([FromBody] SecuritySettingsInput input, CancellationToken cancellationToken)
     {
         if (input.RetentionDays is < SecuritySettings.MinRetentionDays or > SecuritySettings.MaxRetentionDays)
@@ -91,10 +95,13 @@ public class SecuritySettingsController(GuardDb guardDb, SecurityLog audit) : Gu
     /// <summary>The site's security settings (<see cref="GuardSecuritySettings.LoadAsync"/>), kept here for code that called it.</summary>
     public static Task<SecuritySettings> LoadAsync(GuardDbContext db, CancellationToken cancellationToken) => GuardSecuritySettings.LoadAsync(db, cancellationToken);
 
-    private static SecuritySettingsDto ToDto(SecuritySettings s) => new(
+    private SecuritySettingsDto ToDto(SecuritySettings s) => new(
         s.RetentionDays, SecuritySettings.MinRetentionDays, SecuritySettings.MaxRetentionDays,
         s.StepUpMinutes, SecuritySettings.MinStepUpMinutes, SecuritySettings.MaxStepUpMinutes,
-        s.TokenMaxDays, SecuritySettings.MinTokenMaxDays, SecuritySettings.MaxTokenMaxDays, s.AppsMayRegister);
+        s.TokenMaxDays, SecuritySettings.MinTokenMaxDays, SecuritySettings.MaxTokenMaxDays, s.AppsMayRegister)
+    {
+        StepUpStrong = levels.Strong.Shown(),
+    };
 }
 
 /// <summary>The step-up window as the site sets it: ten minutes unless changed, never more than thirty.</summary>
@@ -135,7 +142,7 @@ public class SecondFactorSettingsController(GuardDb guardDb, SecurityLog audit, 
     }
 
     [HttpPut]
-    [StepUp]
+    [StepUp(StepUpCategories.Security)]
     public async Task<SecondFactorSettingsDto> Save([FromBody] SecondFactorSettingsInput input, CancellationToken cancellationToken)
     {
         List<SecondFactorMethodOptionDto> available = await AvailableAsync(cancellationToken);

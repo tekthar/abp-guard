@@ -6,8 +6,8 @@ using Volo.Abp.Modularity;
 namespace AbpGuard;
 
 /// <summary>
-/// The error codes Guard answers with: a refusal, a step-up needed (with <c>maxAgeSeconds</c> in the error's
-/// data), and too many tries. Clients tell them apart by status and by <c>step_up_required</c>; the others' names are
+/// The error codes Guard answers with: a refusal, a step-up needed (with its <c>level</c>, <c>category</c>,
+/// <c>methods</c> and <c>maxAgeSeconds</c> in the error's data), a strong factor needed, and too many tries. Clients tell them apart by status and by <c>step_up_required</c>; the others' names are
 /// Guard's own.
 /// </summary>
 public static class GuardErrorCodes
@@ -20,6 +20,12 @@ public static class GuardErrorCodes
     /// the session; the error's data says how recent (<c>maxAgeSeconds</c>).
     /// </summary>
     public const string StepUpRequired = "step_up_required";
+
+    /// <summary>
+    /// A strong step-up is asked of someone with no strong factor yet (a passkey or an authenticator app). 403; the data
+    /// names the <c>category</c>, and the prompt offers to set one up.
+    /// </summary>
+    public const string StrongFactorRequired = "strong_factor_required";
 
     /// <summary>Too many requests from one place in a while (sign-up, password reset). 429.</summary>
     public const string TooManyRequests = "Guard:TooManyRequests";
@@ -35,6 +41,7 @@ public class AbpGuardActingModule : AbpModule
         {
             options.Map(GuardErrorCodes.Forbidden, System.Net.HttpStatusCode.Forbidden);
             options.Map(GuardErrorCodes.StepUpRequired, System.Net.HttpStatusCode.Forbidden);
+            options.Map(GuardErrorCodes.StrongFactorRequired, System.Net.HttpStatusCode.Forbidden);
             options.Map(GuardErrorCodes.TooManyRequests, System.Net.HttpStatusCode.TooManyRequests);
         });
         // The names Guard writes into tokens, cookies and stored data (Guard:Names), as a host gives them.

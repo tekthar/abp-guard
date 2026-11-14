@@ -135,7 +135,8 @@ public sealed class SecondFactors(
     IGuardMessenger messenger,
     ILogger<SecondFactors> logger,
     IOptions<GuardNames> names,
-    Passkeys passkeys) : ITransientDependency
+    Passkeys passkeys,
+    IGuardSiteDefaults siteDefaults) : ITransientDependency
 {
     public const int RecoveryCodeCount = 10;
     private const int MaxWrongCodes = 10;
@@ -387,6 +388,37 @@ public sealed class SecondFactors(
             : new PasskeyOptionsResult(null, "no_passkey");
     }
 
+    /// <summary>
+    /// The person's ways to step up, best first, for the 403 that asks (<c>methods</c>): at the strong level a passkey and
+    /// the app; at the password level a passkey (alone), then the password with the app, a code the site sends them, or a
+    /// recovery code where the host lists them.
+    /// </summary>
+    public Task<Acting.StepUpMethods> StepUpMethodsAsync(Guid accountId, bool strong, CancellationToken cancellationToken) =>
+        guardDb.RunAsync(async db =>
+        {
+            List<string> kinds = Disabled ? [] : await KindsAsync(db, accountId, cancellationToken);
+            bool hasStrong = kinds.Exists(SecondFactorKinds.IsStrong);
+            if (strong)
+            {
+                return new Acting.StepUpMethods([.. kinds.Where(SecondFactorKinds.IsStrong)], hasStrong);
+            }
+
+            List<string> methods = [.. kinds.Where(k => k == SecondFactorKinds.Passkey), .. kinds.Where(k => k == SecondFactorKinds.App), Acting.StepUpLevels.Password];
+            if (!Disabled && await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == accountId, cancellationToken) is { } account
+                && await ModeAsync(db, account, cancellationToken) != TwoFactorModes.Strong)
+            {
+                methods.AddRange((await SendersAsync(db, account, cancellationToken)).Select(s => s.Method));
+            }
+
+            if (options.Value.TwoFactor.ListsRecovery && kinds.Count > 0
+                && await db.RecoveryCodes.AnyAsync(c => c.AccountId == accountId && c.UsedAt == null, cancellationToken))
+            {
+                methods.Add(SecondFactorKinds.Recovery);
+            }
+
+            return new Acting.StepUpMethods(methods, hasStrong);
+        }, cancellationToken: cancellationToken);
+
     /// <summary>Whether the person has a second factor set up (a step-up then asks for a code too).</summary>
     public Task<bool> HasAsync(Guid accountId, CancellationToken cancellationToken) =>
         Disabled ? Task.FromResult(false) : guardDb.RunAsync(db => HasFactorAsync(db, accountId, cancellationToken), cancellationToken: cancellationToken);
@@ -457,7 +489,37 @@ public sealed class SecondFactors(
             await db.SaveChangesAsync(cancellationToken);
             return new SecondFactorEnrolledDto(codes);
         }, requiresNew: true, cancellationToken);
+        if (done is not null)
+        {
+            await NotifyAsync(accountId, SecondFactorMail.Added, FactorChange.Added(SecondFactorKinds.App, null), cancellationToken);
+        }
+
         return done;
+    }
+
+    /// <summary>
+    /// Tells the person a factor was added or removed, by mail where mail reaches them (the messenger says): if it wasn't
+    /// them, they hear of it at once. A notice that can't go out doesn't undo the change.
+    /// </summary>
+    private async Task NotifyAsync(Guid accountId, string kind, FactorChange change, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var account = await guardDb.RunAsync(db => db.Accounts.AsNoTracking().Where(a => a.Id == accountId)
+                .Select(a => new { a.Username, a.Email, a.MailTo, a.Language }).FirstOrDefaultAsync(cancellationToken), cancellationToken: cancellationToken);
+            if (account is null || !(await messenger.ReachAsync(accountId, account.MailTo ?? account.Email, cancellationToken)).Any(w => w.Method == SecondFactorKinds.Email))
+            {
+                return;
+            }
+
+            string language = account.Language ?? siteDefaults.RequestLanguage;
+            await messenger.SendAsync(new GuardMessage(kind, accountId, null, null,
+                new Dictionary<string, object?> { ["username"] = account.Username, ["change"] = change.In(language) }, language, "second-factor"), cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "The notice of a second factor's change couldn't be sent");
+        }
     }
 
     /// <summary>The options for a new passkey of someone signed in (the browser's creation options), for the session or sign-in that asks.</summary>
@@ -471,9 +533,10 @@ public sealed class SecondFactors(
     public async Task<PasskeyAddResult> AddPasskeyAsync(Guid accountId, string binding, string? name, JsonElement? credential, CancellationToken cancellationToken,
         string purpose = Passkeys.Register)
     {
+        PasskeyAddResult result;
         try
         {
-            return await guardDb.RunAsync(async db =>
+            result = await guardDb.RunAsync(async db =>
             {
                 PasskeyRegistration made = await passkeys.RegisterAsync(db, accountId, purpose, binding, name, credential, cancellationToken);
                 if (made.Passkey is not { } passkey)
@@ -495,6 +558,13 @@ public sealed class SecondFactors(
             // The same device's passkey added twice at once: the unique credential id keeps one.
             return new PasskeyAddResult(null, Passkeys.Exists);
         }
+
+        if (result.Added is { } added)
+        {
+            await NotifyAsync(accountId, SecondFactorMail.Added, FactorChange.Added(SecondFactorKinds.Passkey, added.Name), cancellationToken);
+        }
+
+        return result;
     }
 
     /// <summary>Renames one of the person's passkeys: 1 to 100 characters.</summary>
@@ -743,11 +813,13 @@ public sealed class SecondFactors(
         }, cancellationToken: cancellationToken);
 
     /// <summary>
-    /// Removes one of the person's second factors (the app, or a passkey); not the last one while a group of theirs requires
-    /// one (<c>last_strong_factor</c>). Recovery codes go with the last.
+    /// Removes one of the person's second factors (the app, or a passkey), by them or, for a lost device, an admin; not
+    /// the last one while a group of theirs requires one (<c>last_strong_factor</c>). Recovery codes go with the last. The
+    /// person is told.
     /// </summary>
-    public Task RemoveAsync(Guid accountId, Guid factorId, CancellationToken cancellationToken) =>
-        guardDb.RunAsync(async db =>
+    public async Task RemoveAsync(Guid accountId, Guid factorId, CancellationToken cancellationToken, bool byAdmin = false)
+    {
+        (string kind, string? name) = await guardDb.RunAsync(async db =>
         {
             SecondFactor? factor = await db.SecondFactors.FirstOrDefaultAsync(f => f.Id == factorId && f.AccountId == accountId, cancellationToken);
             Passkey? passkey = factor is null ? await db.Passkeys.FirstOrDefaultAsync(p => p.Id == factorId && p.AccountId == accountId, cancellationToken) : null;
@@ -779,9 +851,12 @@ public sealed class SecondFactors(
             }
 
             audit.Add(db, SecurityAuditTypes.SecondFactorRemoved, new AuditTarget("Account", accountId, account.Username),
-                passkey is null ? new { kind = factor!.Kind } : new { kind = SecondFactorKinds.Passkey, name = passkey.Name });
+                passkey is null ? new { kind = factor!.Kind, byAdmin } : new { kind = SecondFactorKinds.Passkey, name = passkey.Name, byAdmin });
             await db.SaveChangesAsync(cancellationToken);
+            return passkey is null ? (factor!.Kind, (string?)null) : (SecondFactorKinds.Passkey, passkey.Name);
         }, requiresNew: true, cancellationToken);
+        await NotifyAsync(accountId, SecondFactorMail.Removed, FactorChange.Removed(kind, name, byAdmin), cancellationToken);
+    }
 
     /// <summary>Ten new recovery codes in place of the old ones, shown this once.</summary>
     public Task<List<string>> RenewRecoveryCodesAsync(Guid accountId, CancellationToken cancellationToken) =>
@@ -799,19 +874,27 @@ public sealed class SecondFactors(
         }, requiresNew: true, cancellationToken);
 
     /// <summary>An admin's reset: every second factor and recovery code of the person goes; their groups may ask them to set one up again.</summary>
-    public Task ResetAsync(Guid accountId, CancellationToken cancellationToken) =>
-        guardDb.RunAsync(async db =>
+    public async Task ResetAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        int removed = await guardDb.RunAsync(async db =>
         {
             Account account = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == accountId, cancellationToken)
                 ?? throw new Volo.Abp.Domain.Entities.EntityNotFoundException(typeof(Account), accountId);
-            int removed = await db.SecondFactors.Where(f => f.AccountId == accountId).ExecuteDeleteAsync(cancellationToken)
+            int removed = await db.SecondFactors.Where(f => f.AccountId == accountId && f.ConfirmedAt != null).ExecuteDeleteAsync(cancellationToken)
                 + await db.Passkeys.Where(p => p.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
+            await db.SecondFactors.Where(f => f.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
             await db.PasskeyChallenges.Where(c => c.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
             await db.RecoveryCodes.Where(c => c.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
             audit.Add(db, SecurityAuditTypes.SecondFactorReset, new AuditTarget("Account", accountId, account.Username), new { removed });
             await db.SaveChangesAsync(cancellationToken);
             logger.LogInformation("An admin reset the second factors of {Username}", account.Username);
+            return removed;
         }, requiresNew: true, cancellationToken);
+        if (removed > 0)
+        {
+            await NotifyAsync(accountId, SecondFactorMail.Removed, FactorChange.Reset(), cancellationToken);
+        }
+    }
 
     /// <summary>
     /// A code of the method: one of the person's app factors (each code once), an unused recovery code (once), a sent code,

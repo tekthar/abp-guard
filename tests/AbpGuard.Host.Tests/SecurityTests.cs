@@ -63,6 +63,8 @@ public sealed partial class SecurityTests : IAsyncLifetime
             Environment.SetEnvironmentVariable($"Guard__Features__{feature}", "true");
         }
 
+        // What came before 0.7.0's levels: every step-up at the password level (StrongStepUpTests runs with the default).
+        Environment.SetEnvironmentVariable("Guard__StepUp__Strong", "none");
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(host => host.ConfigureServices(s => s.AddSingleton<IStartupFilter>(new TestAddresses())));
         return Task.CompletedTask;
     }
@@ -73,6 +75,8 @@ public sealed partial class SecurityTests : IAsyncLifetime
         {
             await _factory.DisposeAsync();
         }
+
+        Environment.SetEnvironmentVariable("Guard__StepUp__Strong", null);
 
         foreach (string feature in Features)
         {

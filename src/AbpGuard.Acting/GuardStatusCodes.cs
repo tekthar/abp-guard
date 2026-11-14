@@ -29,6 +29,7 @@ public class GuardHttpExceptionStatusCodeFinder(IOptions<AbpExceptionHttpStatusC
             {
                 case GuardErrorCodes.Forbidden:
                 case GuardErrorCodes.StepUpRequired:
+                case GuardErrorCodes.StrongFactorRequired:
                     return HttpStatusCode.Forbidden;
                 case GuardErrorCodes.TooManyRequests:
                     return HttpStatusCode.TooManyRequests;

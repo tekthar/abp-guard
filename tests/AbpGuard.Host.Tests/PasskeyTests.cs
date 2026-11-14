@@ -40,6 +40,8 @@ public sealed class PasskeyTests : IAsyncLifetime
             Environment.SetEnvironmentVariable($"Guard__Features__{feature}", "true");
         }
 
+        // Guard's default levels: roles, security and the rest strong.
+        Environment.SetEnvironmentVariable("Guard__StepUp__Strong", null);
         _factory = new WebApplicationFactory<Program>();
         return Task.CompletedTask;
     }
@@ -101,11 +103,8 @@ public sealed class PasskeyTests : IAsyncLifetime
             Assert.True(mine.RootElement.GetProperty("strong").GetBoolean());
         }
 
-        // The same device again: its passkey is excluded, and refused if it answers anyway.
-        JsonElement again = await OptionsAsync(browser, csrf, "/api/guard/me/passkeys/options");
-        Assert.Equal(phone.Id, Assert.Single(again.GetProperty("excludeCredentials").EnumerateArray()).GetProperty("id").GetString());
-        await AssertErrorAsync(await SendAsync(browser, csrf, HttpMethod.Post, "/api/guard/me/passkeys", new { name = "Again", credential = phone.Register(again) }),
-            HttpStatusCode.BadRequest, "passkey_exists");
+        // A second factor needs a strong step-up now: the password alone signed this session in.
+        await AssertErrorAsync(await SendAsync(browser, csrf, HttpMethod.Post, "/api/guard/me/passkeys/options", new { }), HttpStatusCode.Forbidden, "step_up_required");
 
         // A step-up with the passkey alone: both times now.
         JsonElement asked = await OptionsAsync(browser, csrf, "/api/guard/session/step-up/options");
@@ -117,6 +116,12 @@ public sealed class PasskeyTests : IAsyncLifetime
         {
             Assert.Equal(proof.RootElement.GetProperty("authTime").GetDateTime(), proof.RootElement.GetProperty("strongAuthTime").GetDateTime());
         }
+
+        // The same device again, now strongly stepped up: its passkey is excluded, and refused if it answers anyway.
+        JsonElement again = await OptionsAsync(browser, csrf, "/api/guard/me/passkeys/options");
+        Assert.Equal(phone.Id, Assert.Single(again.GetProperty("excludeCredentials").EnumerateArray()).GetProperty("id").GetString());
+        await AssertErrorAsync(await SendAsync(browser, csrf, HttpMethod.Post, "/api/guard/me/passkeys", new { name = "Again", credential = phone.Register(again) }),
+            HttpStatusCode.BadRequest, "passkey_exists");
 
         // A challenge is good once.
         await AssertErrorAsync(await SendAsync(browser, csrf, HttpMethod.Post, "/api/guard/session/step-up", new { method = "passkey", credential = phone.Assert(asked) }),
@@ -148,7 +153,7 @@ public sealed class PasskeyTests : IAsyncLifetime
         using (JsonDocument step = JsonDocument.Parse(await signIn.Content.ReadAsStringAsync()))
         {
             ticket = step.RootElement.GetProperty("secondFactor").GetProperty("ticket").GetString()!;
-            Assert.Equal(["passkey"], step.RootElement.GetProperty("secondFactor").GetProperty("methods").EnumerateArray().Select(m => m.GetString()).ToArray());
+            Assert.Equal(["passkey"], step.RootElement.GetProperty("secondFactor").GetProperty("methods").EnumerateArray().Select(m => m.GetString()!).ToArray());
         }
 
         HttpResponseMessage stepOptions = await other.PostAsJsonAsync("/api/guard/session/second-step/options", new { ticket });
@@ -174,7 +179,8 @@ public sealed class PasskeyTests : IAsyncLifetime
     [Fact]
     public async Task A_strong_group_sets_up_a_passkey_at_sign_in_and_takes_it_as_the_second_step()
     {
-        (HttpClient admin, string adminCsrf) = await AdminAsync();
+        (HttpClient admin, string adminCsrf, SoftwareAuthenticator adminKey) = await StrongAdminAsync();
+        using SoftwareAuthenticator _ = adminKey;
         Guid quinn = await PersonAsync("quinn", admin, adminCsrf);
         Guid group = await IdAsync(await SendAsync(admin, adminCsrf, HttpMethod.Post, "/api/guard/groups", new { name = "needs-strong", description = (string?)null, directoryId = (Guid?)null }));
         Assert.True((await SendAsync(admin, adminCsrf, HttpMethod.Post, $"/api/guard/groups/{group}/members", new { accountId = quinn, groupId = (Guid?)null })).IsSuccessStatusCode);
@@ -217,7 +223,8 @@ public sealed class PasskeyTests : IAsyncLifetime
     [Fact]
     public async Task A_merge_drops_the_merged_accounts_passkeys_an_export_names_them_and_an_erasure_removes_them()
     {
-        (HttpClient admin, string adminCsrf) = await AdminAsync();
+        (HttpClient admin, string adminCsrf, SoftwareAuthenticator adminKey) = await StrongAdminAsync();
+        using SoftwareAuthenticator _ = adminKey;
         Guid old = await PersonAsync("rex-old", admin, adminCsrf);
         Guid kept = await PersonAsync("rex", admin, adminCsrf);
         foreach (string username in new[] { "rex-old", "rex" })
@@ -260,6 +267,18 @@ public sealed class PasskeyTests : IAsyncLifetime
     {
         HttpClient admin = Client();
         return (admin, await SignInAsync(admin, "admin", AdminPassword));
+    }
+
+    /// <summary>The admin signed in, with a passkey of their own, and stepped up with it: strong for the site's window.</summary>
+    private async Task<(HttpClient Admin, string Csrf, SoftwareAuthenticator Key)> StrongAdminAsync()
+    {
+        (HttpClient admin, string csrf) = await AdminAsync();
+        SoftwareAuthenticator key = new();
+        JsonElement created = await OptionsAsync(admin, csrf, "/api/guard/me/passkeys/options");
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(admin, csrf, HttpMethod.Post, "/api/guard/me/passkeys", new { name = "Admin's key", credential = key.Register(created) })).StatusCode);
+        JsonElement asked = await OptionsAsync(admin, csrf, "/api/guard/session/step-up/options");
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(admin, csrf, HttpMethod.Post, "/api/guard/session/step-up", new { method = "passkey", credential = key.Assert(asked) })).StatusCode);
+        return (admin, csrf, key);
     }
 
     /// <summary>A person in the internal directory ({username}@example.test, <see cref="Password"/>).</summary>

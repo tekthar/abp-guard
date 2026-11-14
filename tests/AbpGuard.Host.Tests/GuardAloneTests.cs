@@ -36,6 +36,8 @@ public sealed partial class GuardAloneTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("Guard__Seed__AdminPassword", AdminPassword);
         Environment.SetEnvironmentVariable("Guard__Messenger__PickupFolder", _mail);
         Environment.SetEnvironmentVariable("Guard__Features__Handoff", "true");
+        // What came before 0.7.0's levels: every step-up at the password level (PasskeyTests and StrongStepUpTests run with the default).
+        Environment.SetEnvironmentVariable("Guard__StepUp__Strong", "none");
         _factory = new WebApplicationFactory<Program>();
         return Task.CompletedTask;
     }
@@ -46,6 +48,8 @@ public sealed partial class GuardAloneTests : IAsyncLifetime
         {
             await _factory.DisposeAsync();
         }
+
+        Environment.SetEnvironmentVariable("Guard__StepUp__Strong", null);
 
         NpgsqlConnection.ClearAllPools();
         await using NpgsqlConnection connection = new($"{Server};Database=postgres");

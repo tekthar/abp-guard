@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using AbpGuard.Services.TwoFactor;
 using AbpGuard.Acting;
 using OpenIddict.Abstractions;
@@ -147,17 +149,24 @@ public sealed record PasskeyNameInput(string? Name);
 [GuardFeature(nameof(GuardFeatures.TwoFactor))]
 public class MyPasskeysController(SecondFactors secondFactors) : GuardControllerBase
 {
-    /// <summary>The creation options (the browser's <c>PublicKeyCredentialCreationOptionsJSON</c>), for this session or sign-in.</summary>
+    /// <summary>
+    /// The creation options (the browser's <c>PublicKeyCredentialCreationOptionsJSON</c>), for this session or sign-in. Asks
+    /// the step-up adding a factor needs (<see cref="FactorStepUps"/>) before the device's prompt, not after it.
+    /// </summary>
     [HttpPost("options")]
-    [StepUp]
-    public async Task<IActionResult> Options(CancellationToken cancellationToken) =>
-        Binding() is { } binding
-            ? Content(await secondFactors.PasskeyOptionsAsync(CurrentAccountId, binding, cancellationToken), "application/json")
-            : SessionController.Error(400, "not_a_session", "Only a browser's or the app's sign-in adds a passkey.");
+    public async Task<IActionResult> Options(CancellationToken cancellationToken)
+    {
+        if (Binding() is not { } binding)
+        {
+            return SessionController.Error(400, "not_a_session", "Only a browser's or the app's sign-in adds a passkey.");
+        }
+
+        await FactorStepUps.EnsureMayAddAsync(HttpContext, secondFactors, CurrentAccountId, cancellationToken);
+        return Content(await secondFactors.PasskeyOptionsAsync(CurrentAccountId, binding, cancellationToken), "application/json");
+    }
 
     /// <summary>Adds a passkey with the device's answer: the factor, and recovery codes (shown once) when it's the person's first.</summary>
     [HttpPost]
-    [StepUp]
     [ProducesResponseType<PasskeyAddedDto>(200)]
     public async Task<IActionResult> Add([FromBody] PasskeyInput input, CancellationToken cancellationToken)
     {
@@ -166,6 +175,7 @@ public class MyPasskeysController(SecondFactors secondFactors) : GuardController
             return SessionController.Error(400, "not_a_session", "Only a browser's or the app's sign-in adds a passkey.");
         }
 
+        await FactorStepUps.EnsureMayAddAsync(HttpContext, secondFactors, CurrentAccountId, cancellationToken);
         PasskeyAddResult added = await secondFactors.AddPasskeyAsync(CurrentAccountId, binding, input.Name, input.Credential, cancellationToken);
         return added.Added is { } passkey ? Ok(passkey) : SecondFactorEnrolmentController.PasskeyError(added.Error);
     }
@@ -182,8 +192,33 @@ public class MyPasskeysController(SecondFactors secondFactors) : GuardController
 }
 
 /// <summary>
-/// A person's own second factors: what their groups ask, the factors they have, setting up the authenticator
-/// app, removing one (not the last while a group requires one) and new recovery codes. Changing them needs a step-up.
+/// The step-ups a person's own second factors ask. Adding one (a passkey, the app) needs a strong step-up once they have a
+/// strong factor, where a sign-in with a recovery code counts too, so someone who lost their device can set up a new one;
+/// their first needs a password-level one, as a phished password can't make itself strong. Removing their last strong
+/// factor needs a strong step-up; the rest are the <c>factors</c> category's.
+/// </summary>
+public static class FactorStepUps
+{
+    public static async Task EnsureMayAddAsync(HttpContext http, SecondFactors secondFactors, Guid accountId, CancellationToken cancellationToken)
+    {
+        bool strong = !secondFactors.Disabled && await secondFactors.HasStrongAsync(accountId, cancellationToken);
+        await http.RequestServices.GetRequiredService<StepUpGuard>().EnsureAtAsync(StepUpCategories.Factors, strong ? StepUpLevels.Strong : StepUpLevels.Password,
+            recoverySignInCounts: strong, cancellationToken);
+    }
+
+    public static async Task EnsureMayRemoveAsync(HttpContext http, SecondFactors secondFactors, Guid accountId, Guid factorId, CancellationToken cancellationToken)
+    {
+        StepUpGuard guard = http.RequestServices.GetRequiredService<StepUpGuard>();
+        await (!secondFactors.Disabled && await secondFactors.IsLastStrongAsync(accountId, factorId, cancellationToken) == true
+            ? guard.EnsureAtAsync(StepUpCategories.Factors, StepUpLevels.Strong, cancellationToken: cancellationToken)
+            : guard.EnsureAsync(StepUpCategories.Factors, cancellationToken));
+    }
+}
+
+/// <summary>
+/// A person's own second factors: what their groups ask, the factors they have (passkeys and the app), setting up the
+/// authenticator app, removing one (not the last while a group requires one) and new recovery codes. Changing them needs a
+/// step-up (<see cref="FactorStepUps"/>).
 /// </summary>
 [Route("api/guard/me/second-factors")]
 [Authorize]
@@ -195,22 +230,28 @@ public class MySecondFactorsController(SecondFactors secondFactors) : GuardContr
 
     /// <summary>Starts setting up the authenticator app: its secret, address and QR code.</summary>
     [HttpPost("app")]
-    [StepUp]
-    public Task<AppEnrolmentDto> StartApp(CancellationToken cancellationToken) => secondFactors.StartAppAsync(CurrentAccountId, cancellationToken);
+    public async Task<AppEnrolmentDto> StartApp(CancellationToken cancellationToken)
+    {
+        await FactorStepUps.EnsureMayAddAsync(HttpContext, secondFactors, CurrentAccountId, cancellationToken);
+        return await secondFactors.StartAppAsync(CurrentAccountId, cancellationToken);
+    }
 
     /// <summary>Finishes with the app's first code; the first second factor comes with recovery codes, shown once.</summary>
     [HttpPost("app/confirm")]
-    [StepUp]
     [ProducesResponseType<SecondFactorEnrolledDto>(200)]
-    public async Task<IActionResult> ConfirmApp([FromBody] SecondFactorConfirmInput input, CancellationToken cancellationToken) =>
-        await secondFactors.FinishAppAsync(CurrentAccountId, input.Code, cancellationToken) is { } enrolled
+    public async Task<IActionResult> ConfirmApp([FromBody] SecondFactorConfirmInput input, CancellationToken cancellationToken)
+    {
+        await FactorStepUps.EnsureMayAddAsync(HttpContext, secondFactors, CurrentAccountId, cancellationToken);
+        return await secondFactors.FinishAppAsync(CurrentAccountId, input.Code, cancellationToken) is { } enrolled
             ? Ok(enrolled)
             : SessionController.Error(400, "second_factor_failed", "The code is incorrect. Check the time on your phone, and enter the code it shows now.");
+    }
 
+    /// <summary>Removes one of the person's factors (the app, or a passkey): a strong step-up when it's their last strong one.</summary>
     [HttpDelete("{id:guid}")]
-    [StepUp]
     public async Task<NoContentResult> Remove(Guid id, CancellationToken cancellationToken)
     {
+        await FactorStepUps.EnsureMayRemoveAsync(HttpContext, secondFactors, CurrentAccountId, id, cancellationToken);
         await secondFactors.RemoveAsync(CurrentAccountId, id, cancellationToken);
         return NoContent();
     }
@@ -223,7 +264,7 @@ public class MySecondFactorsController(SecondFactors secondFactors) : GuardContr
 
     /// <summary>Ten new recovery codes in place of the old ones.</summary>
     [HttpPost("recovery-codes")]
-    [StepUp]
+    [StepUp(StepUpCategories.Factors)]
     public async Task<RecoveryCodesDto> RenewRecoveryCodes(CancellationToken cancellationToken) =>
         new(await secondFactors.RenewRecoveryCodesAsync(CurrentAccountId, cancellationToken));
 }

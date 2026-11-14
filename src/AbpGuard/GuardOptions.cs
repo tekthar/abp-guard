@@ -61,6 +61,22 @@ public sealed class GuardOptions
 
     /// <summary>Passkeys (Guard:Passkeys:*): the relying party, the site's address the browser checks.</summary>
     public GuardPasskeyOptions Passkeys { get; set; } = new();
+
+    /// <summary>Step-up (Guard:StepUp:*): which categories ask for a strong proof.</summary>
+    public GuardStepUpOptions StepUp { get; set; } = new();
+}
+
+/// <summary>
+/// Which step-up categories ask for a strong proof (a passkey, or the password and an authenticator app):
+/// Guard:StepUp:Strong (environment Guard__StepUp__Strong), the server operator's, never a page's.
+/// </summary>
+public sealed class GuardStepUpOptions
+{
+    /// <summary>
+    /// A comma-separated list of categories, <c>*</c> for every one, or <c>none</c> for none (every step-up at the password
+    /// level, as before 0.7.0). Null or empty: <see cref="Acting.StepUpCategories.DefaultStrong"/>.
+    /// </summary>
+    public string? Strong { get; set; }
 }
 
 /// <summary>

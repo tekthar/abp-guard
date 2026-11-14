@@ -183,7 +183,7 @@ public class OAuthAppsController(OAuthApps apps) : GuardControllerBase
 
     [HttpPost("oauth/apps")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Apps)]
     public Task<NewOAuthAppDto> Create([FromBody] CreateOAuthAppInput input, CancellationToken cancellationToken) => apps.CreateAsync(input, cancellationToken);
 
     [HttpDelete("oauth/apps/{clientId}")]

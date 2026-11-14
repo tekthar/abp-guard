@@ -141,7 +141,7 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
         Dictionary<string, string>? Names = null);
 
     [HttpPost]
-    [StepUp]
+    [StepUp(StepUpCategories.Roles)]
     public async Task<GroupDto> Create([FromBody] CreateGroupInput input, CancellationToken cancellationToken)
     {
         Guid directoryId = input.DirectoryId ?? GuardConstants.InternalDirectoryId;
@@ -198,7 +198,7 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
 
     /// <summary>Renames a group made in Guard, changes its description, and an organization's attributes and domains.</summary>
     [HttpPut("{id:guid}")]
-    [StepUp]
+    [StepUp(StepUpCategories.Roles)]
     public async Task<GroupDto> Update(Guid id, [FromBody] UpdateGroupInput input, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(input.Name) || input.Name.Trim().Length > 128)
@@ -261,7 +261,7 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
     /// <c>required</c> or <c>strong</c>. A person follows the strictest of all their groups, nested and synced ones too.
     /// </summary>
     [HttpPut("{id:guid}/two-factor")]
-    [StepUp]
+    [StepUp(StepUpCategories.Security)]
     public Task<GroupDto> SetTwoFactor(Guid id, [FromBody] GroupTwoFactorInput input, CancellationToken cancellationToken)
     {
         if (input.Mode is not { } mode || !TwoFactorModes.All.Contains(mode))
@@ -284,7 +284,7 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
     }
 
     [HttpDelete("{id:guid}")]
-    [StepUp]
+    [StepUp(StepUpCategories.Roles)]
     public async Task<NoContentResult> Delete(Guid id, CancellationToken cancellationToken)
     {
         if (id == GuardConstants.AdminsGroupId || id == GuardConstants.UsersGroupId)
@@ -315,7 +315,7 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
     public sealed record AddMemberInput(Guid? AccountId, Guid? GroupId);
 
     [HttpPost("{id:guid}/members")]
-    [StepUp]
+    [StepUp(StepUpCategories.Roles)]
     public async Task<NoContentResult> AddMember(Guid id, [FromBody] AddMemberInput input, CancellationToken cancellationToken)
     {
         if (input.AccountId is null == input.GroupId is null)
@@ -372,7 +372,7 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
     }
 
     [HttpDelete("{id:guid}/members/{memberType}/{memberId:guid}")]
-    [StepUp]
+    [StepUp(StepUpCategories.Roles)]
     public async Task<NoContentResult> RemoveMember(Guid id, string memberType, Guid memberId, CancellationToken cancellationToken)
     {
         string groupName = await guardDb.RunAsync(async db =>

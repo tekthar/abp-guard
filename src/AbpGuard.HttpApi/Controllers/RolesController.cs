@@ -75,7 +75,7 @@ public class RolesController(GuardDb guardDb, RoleCatalog roleCatalog, SecurityL
     }
 
     [HttpPost]
-    [StepUp]
+    [StepUp(StepUpCategories.Roles)]
     public async Task<RoleDto> Create([FromBody] CreateRoleInput input, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(input.Key) || !RoleCatalog.KeyPattern.IsMatch(input.Key))
@@ -117,7 +117,7 @@ public class RolesController(GuardDb guardDb, RoleCatalog roleCatalog, SecurityL
     }
 
     [HttpPost("{roleId:guid}/grants")]
-    [StepUp]
+    [StepUp(StepUpCategories.Roles)]
     public async Task<RoleDto> Grant(Guid roleId, [FromBody] GrantInput input, CancellationToken cancellationToken)
     {
         if (!Enum.TryParse(input.PrincipalType, ignoreCase: true, out PrincipalType principalType))
@@ -135,7 +135,7 @@ public class RolesController(GuardDb guardDb, RoleCatalog roleCatalog, SecurityL
     }
 
     [HttpDelete("{roleId:guid}/grants/{grantId:guid}")]
-    [StepUp]
+    [StepUp(StepUpCategories.Roles)]
     public async Task<NoContentResult> Revoke(Guid roleId, Guid grantId, CancellationToken cancellationToken)
     {
         bool belongs = await guardDb.RunAsync(db => db.RoleGrants.AnyAsync(g => g.Id == grantId && g.RoleId == roleId, cancellationToken), cancellationToken: cancellationToken);

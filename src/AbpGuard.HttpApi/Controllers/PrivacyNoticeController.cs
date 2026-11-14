@@ -37,7 +37,7 @@ public class PrivacyNoticeController(PrivacyNotices notices, SecurityLog audit) 
     /// <summary>Withdrawing consent can't be taken back by the person, so it asks for the password again.</summary>
     [HttpPost("me/privacy/withdraw")]
     [Authorize]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task<MyPrivacyDto> Withdraw([FromBody] ConsentWithdrawInput input, CancellationToken cancellationToken)
     {
         await notices.WithdrawAsync(CurrentAccountId, input.Store, cancellationToken);
@@ -52,7 +52,7 @@ public class PrivacyNoticeController(PrivacyNotices notices, SecurityLog audit) 
     /// <summary>Publishes a new version: everyone signed in on the web is asked to accept it, so it asks for the password again.</summary>
     [HttpPost("privacy/notices")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task<PrivacyNoticeVersionDto> Publish([FromBody] PrivacyNoticeInput input, CancellationToken cancellationToken)
     {
         PrivacyNoticeVersionDto published = await notices.PublishAsync(input, CurrentAccountId, cancellationToken);
@@ -67,7 +67,7 @@ public class PrivacyNoticeController(PrivacyNotices notices, SecurityLog audit) 
     /// <summary>A withdrawal marked handled leaves the admins' list of what's waiting, so it asks for the password again.</summary>
     [HttpPost("privacy/consent-withdrawals/{id:guid}/handled")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task<ConsentWithdrawalDto> Handled(Guid id, [FromBody] ConsentHandledInput? input, CancellationToken cancellationToken)
     {
         ConsentWithdrawalDto handled = await notices.HandleAsync(id, CurrentAccountId, input?.Note, cancellationToken);

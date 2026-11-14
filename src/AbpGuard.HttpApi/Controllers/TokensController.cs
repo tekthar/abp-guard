@@ -27,10 +27,18 @@ public class MyTokensController(PersonalTokens tokens, GuardDb guardDb) : GuardC
         new TokenLimitsDto((await db.SecuritySettings.AsNoTracking().Where(s => s.Id == SecuritySettings.SingletonId).Select(s => (int?)s.TokenMaxDays)
             .FirstOrDefaultAsync(cancellationToken)) ?? SecuritySettings.DefaultTokenMaxDays), cancellationToken: cancellationToken);
 
+    /// <summary>
+    /// Makes a token, shown once, after a step-up: of the <c>tokens</c> category, or <c>admin-tokens</c> for a site admin,
+    /// whose token is a lasting key to everything past every later step-up.
+    /// </summary>
     [HttpPost]
-    [StepUp]
-    public Task<NewPersonalTokenDto> Create([FromBody] CreatePersonalTokenInput input, CancellationToken cancellationToken) =>
-        tokens.CreateAsync(CurrentAccountId, input, CurrentAccountId, cancellationToken);
+    public async Task<NewPersonalTokenDto> Create([FromBody] CreatePersonalTokenInput input, [FromServices] StepUpGuard stepUp, [FromServices] AbilityFactory abilities,
+        CancellationToken cancellationToken)
+    {
+        bool admin = await abilities.HoldsAdminRightsAsync(CurrentAccountId, cancellationToken);
+        await stepUp.EnsureAsync(admin ? StepUpCategories.AdminTokens : StepUpCategories.Tokens, cancellationToken);
+        return await tokens.CreateAsync(CurrentAccountId, input, CurrentAccountId, cancellationToken);
+    }
 
     [HttpDelete("{id:guid}")]
     public async Task<NoContentResult> Revoke(Guid id, CancellationToken cancellationToken)
@@ -89,7 +97,7 @@ public class ServiceAccountsController(GuardDb guardDb, ServiceAccountMaker make
     }, cancellationToken: cancellationToken);
 
     [HttpPost]
-    [StepUp]
+    [StepUp(StepUpCategories.ServiceAccounts)]
     public async Task<ServiceAccountDto> Create([FromBody] CreateServiceAccountInput input, CancellationToken cancellationToken)
     {
         (Account account, string directory) = await maker.MakeAsync(new ServiceAccountInput(input.Username ?? "") { DisplayName = input.DisplayName }, cancellationToken);
@@ -107,7 +115,7 @@ public class ServiceAccountsController(GuardDb guardDb, ServiceAccountMaker make
     /// <summary>A token for the service account, shown once: sensitive, so it needs a step-up.</summary>
     [HttpPost("{id:guid}/tokens")]
     [GuardFeature(nameof(GuardFeatures.PersonalTokens))]
-    [StepUp]
+    [StepUp(StepUpCategories.ServiceAccounts)]
     public async Task<NewPersonalTokenDto> CreateToken(Guid id, [FromBody] CreatePersonalTokenInput input, CancellationToken cancellationToken)
     {
         await ServiceAccountAsync(id, cancellationToken);

@@ -32,7 +32,7 @@ public class DataExportController(PersonalDataExports exports, GuardDb guardDb, 
 
     [HttpPost("me/data-export")]
     [Authorize]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task Mine([FromBody] DataExportInput? input, CancellationToken cancellationToken)
     {
         Guid me = CurrentAccountId;
@@ -55,7 +55,7 @@ public class DataExportController(PersonalDataExports exports, GuardDb guardDb, 
 
     [HttpPost("accounts/{id:guid}/data-export")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task Account(Guid id, [FromBody] DataExportInput? input, CancellationToken cancellationToken)
     {
         var account = await guardDb.RunAsync(db => db.Accounts.AsNoTracking().Where(a => a.Id == id)
@@ -71,7 +71,7 @@ public class DataExportController(PersonalDataExports exports, GuardDb guardDb, 
 
     [HttpPost("privacy/people/data-export")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Privacy)]
     public async Task Outside([FromBody] OutsideDataExportInput input, CancellationToken cancellationToken)
     {
         PersonalDataSubject subject = PersonalDataSubject.Outside(input.Email, input.Phone);

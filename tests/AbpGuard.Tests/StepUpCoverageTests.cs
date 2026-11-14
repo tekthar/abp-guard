@@ -59,5 +59,38 @@ public class StepUpCoverageTests
         Assert.Empty(Without.Keys.Except(seen)); // an exception for an action that's gone or renamed goes too
     }
 
+    [Fact]
+    public void Every_mark_of_Guards_names_one_of_its_categories()
+    {
+        HashSet<string> known = [.. typeof(StepUpCategories).GetFields(BindingFlags.Public | BindingFlags.Static).Where(f => f.IsLiteral).Select(f => (string)f.GetRawConstantValue()!)];
+        List<string> unnamed = [];
+        foreach (Type controller in typeof(AbpGuardHttpApiModule).Assembly.GetTypes().Where(t => t.IsClass && !t.IsAbstract && t.Name.EndsWith("Controller", StringComparison.Ordinal)))
+        {
+            foreach (MethodInfo action in controller.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly))
+            {
+                if (action.GetCustomAttribute<StepUpAttribute>() is { } mark && (mark.Category is null || !known.Contains(mark.Category)))
+                {
+                    unnamed.Add($"{controller.Name}.{action.Name}");
+                }
+            }
+        }
+
+        Assert.True(unnamed.Count == 0, "A step-up mark without one of Guard's categories: " + string.Join(", ", unnamed));
+    }
+
+    [Theory]
+    [InlineData(null, "plugins", true)]
+    [InlineData("", "roles", true)]
+    [InlineData(null, "factors", false)]
+    [InlineData("roles, plugins", "roles", true)]
+    [InlineData("roles, plugins", "security", false)]
+    [InlineData("publishing,signing-keys", "Publishing", true)]
+    [InlineData("*", "anything", true)]
+    [InlineData("*", null, true)]
+    [InlineData("none", "roles", false)]
+    [InlineData(null, null, false)]
+    public void The_operator_says_which_categories_are_strong(string? setting, string? category, bool strong) =>
+        Assert.Equal(strong, StepUpStrongCategories.Parse(setting).Includes(category));
+
     private static bool IsAdmin(MemberInfo member) => member.GetCustomAttributes<AuthorizeAttribute>().Any(a => a.Policy == GuardPolicies.Admin);
 }

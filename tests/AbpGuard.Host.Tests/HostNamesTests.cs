@@ -42,6 +42,8 @@ public sealed class HostNamesTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
         Environment.SetEnvironmentVariable("ConnectionStrings__Guard", $"{Server};Database={_database}");
         Environment.SetEnvironmentVariable("Guard__Seed__AdminPassword", AdminPassword);
+        // What came before 0.7.0's levels: every step-up at the password level.
+        Environment.SetEnvironmentVariable("Guard__StepUp__Strong", "none");
         return Task.CompletedTask;
     }
 
@@ -49,6 +51,7 @@ public sealed class HostNamesTests : IAsyncLifetime
     {
         await StopAsync();
         SetNames(on: false);
+        Environment.SetEnvironmentVariable("Guard__StepUp__Strong", null);
         NpgsqlConnection.ClearAllPools();
         await using NpgsqlConnection connection = new($"{Server};Database=postgres");
         await connection.OpenAsync();

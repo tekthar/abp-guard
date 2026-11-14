@@ -39,7 +39,7 @@ public class AnonymousController(RoleCatalog roles, IEnumerable<IGrantScopeDescr
     }
 
     [HttpDelete("{grantId:guid}")]
-    [StepUp]
+    [StepUp(StepUpCategories.Roles)]
     public async Task<NoContentResult> Revoke(Guid grantId, CancellationToken cancellationToken)
     {
         if ((await roles.AnonymousGrantsAsync(cancellationToken)).All(g => g.Id != grantId))

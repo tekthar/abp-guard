@@ -46,6 +46,60 @@ public static class SecondFactorMail
         Variables,
         Sample());
 
+    public const string Added = GuardMessageKinds.SecondFactorAdded;
+    public const string Removed = GuardMessageKinds.SecondFactorRemoved;
+
+    private static readonly GuardTemplateVariable[] ChangeVariables =
+    [
+        new("recipient.name", Text("The account's owner", "صاحب الحساب")),
+        new("username", Text("The account's username", "اسم المستخدم للحساب")),
+        new("change", Text("What changed, and who changed it, in a sentence", "ما الذي تغيّر ومن غيّره، في جملة")),
+    ];
+
+    private static Dictionary<string, object?> ChangeSample(string change) => new()
+    {
+        ["recipient"] = new Dictionary<string, object?> { ["name"] = "Dana Dev", ["email"] = "dana@example.com", ["time_zone"] = "UTC" },
+        ["username"] = "dana",
+        ["change"] = change,
+    };
+
+    /// <summary>Telling a person a second factor was added to their account, so they hear of one that wasn't theirs.</summary>
+    public static readonly GuardMessageTemplate AddedDefinition = new(
+        Added,
+        Email: true,
+        Text("A second factor added", "إضافة عامل ثانٍ"),
+        Text("Sent when a passkey or an authenticator app is added to someone's account.", "تُرسل عند إضافة مفتاح مرور أو تطبيق مصادقة إلى حساب أحدهم."),
+        new Dictionary<string, GuardTemplateText>
+        {
+            ["en"] = new("A second factor was added to your {product} account",
+                "Hello {{ recipient.name }},\n\n{{ change }} It's on your {product} account {{ username }}.\n\n"
+                + "If this wasn't you, someone may be signed in as you: change your password, sign out everywhere else, and tell your site's administrators at once."),
+            ["ar"] = new("أُضيف عامل ثانٍ إلى حسابك في {product}",
+                "مرحبًا {{ recipient.name }}،\n\n{{ change }} وذلك في حسابك في {product} {{ username }}.\n\n"
+                + "إن لم تكن أنت، فقد يكون أحدٌ مسجّلًا الدخول باسمك: غيّر كلمة مرورك، وسجّل الخروج من كل مكان آخر، وأخبر مشرفي موقعك فورًا."),
+        },
+        ChangeVariables,
+        ChangeSample("You added the passkey “Dana's phone” to your second factors."));
+
+    /// <summary>Telling a person a second factor was removed from their account, by them or an admin.</summary>
+    public static readonly GuardMessageTemplate RemovedDefinition = new(
+        Removed,
+        Email: true,
+        Text("A second factor removed", "إزالة عامل ثانٍ"),
+        Text("Sent when a passkey or an authenticator app is removed from someone's account, by them or an admin, or an admin resets them.",
+            "تُرسل عند إزالة مفتاح مرور أو تطبيق مصادقة من حساب أحدهم، بيده أو بيد مشرف، أو عند إعادة مشرفٍ ضبطها."),
+        new Dictionary<string, GuardTemplateText>
+        {
+            ["en"] = new("A second factor was removed from your {product} account",
+                "Hello {{ recipient.name }},\n\n{{ change }} It was on your {product} account {{ username }}.\n\n"
+                + "If you didn't expect this, change your password and tell your site's administrators at once."),
+            ["ar"] = new("أُزيل عامل ثانٍ من حسابك في {product}",
+                "مرحبًا {{ recipient.name }}،\n\n{{ change }} وذلك في حسابك في {product} {{ username }}.\n\n"
+                + "إن لم تتوقع هذا، فغيّر كلمة مرورك وأخبر مشرفي موقعك فورًا."),
+        },
+        ChangeVariables,
+        ChangeSample("An administrator removed the passkey “Dana's phone” from your second factors."));
+
     public static readonly GuardMessageTemplate CodeMessageDefinition = new(
         CodeMessage,
         Email: false,
@@ -58,4 +112,32 @@ public static class SecondFactorMail
         },
         Variables,
         Sample());
+}
+
+/// <summary>
+/// What changed in a person's second factors, said in a sentence in their language (English, else Arabic for "ar"):
+/// the <c>change</c> a notice's template puts in.
+/// </summary>
+public sealed record FactorChange(string English, string Arabic)
+{
+    public static FactorChange Added(string kind, string? name) => new(
+        $"You added {What(kind, name, arabic: false)} to your second factors.",
+        $"أضفتَ {What(kind, name, arabic: true)} إلى عواملك الثانية.");
+
+    public static FactorChange Removed(string kind, string? name, bool byAdmin) => byAdmin
+        ? new($"An administrator removed {What(kind, name, arabic: false)} from your second factors.", $"أزال أحد المشرفين {What(kind, name, arabic: true)} من عواملك الثانية.")
+        : new($"You removed {What(kind, name, arabic: false)} from your second factors.", $"أزلتَ {What(kind, name, arabic: true)} من عواملك الثانية.");
+
+    public static FactorChange Reset() => new(
+        "An administrator reset your second factors: if your site asks for one, you'll set one up again when you next sign in.",
+        "أعاد أحد المشرفين ضبط عواملك الثانية: إن طلب موقعك عاملًا ثانيًا، فستُعدّه من جديد عند تسجيل دخولك القادم.");
+
+    public string In(string language) => language.StartsWith("ar", StringComparison.OrdinalIgnoreCase) ? Arabic : English;
+
+    private static string What(string kind, string? name, bool arabic) => kind switch
+    {
+        Domain.SecondFactorKinds.Passkey when name is { Length: > 0 } => arabic ? $"مفتاح المرور «{name}»" : $"the passkey “{name}”",
+        Domain.SecondFactorKinds.Passkey => arabic ? "مفتاح مرور" : "a passkey",
+        _ => arabic ? "تطبيق مصادقة" : "an authenticator app",
+    };
 }

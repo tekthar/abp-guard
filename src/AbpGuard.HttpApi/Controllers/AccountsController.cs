@@ -122,7 +122,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
 
     /// <summary>Creates a user in an internal directory (Guard's own by default).</summary>
     [HttpPost]
-    [StepUp]
+    [StepUp(StepUpCategories.Accounts)]
     public async Task<AccountDto> Create([FromBody] CreateAccountInput input, CancellationToken cancellationToken)
     {
         Ensure(await AbilityAsync(cancellationToken), "create", "Account");
@@ -179,11 +179,11 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
     }
 
     [HttpPost("{id:guid}/lock")]
-    [StepUp]
+    [StepUp(StepUpCategories.Accounts)]
     public Task<AccountDto> Lock(Guid id, CancellationToken cancellationToken) => SetLockedAsync(id, locked: true, cancellationToken);
 
     [HttpPost("{id:guid}/unlock")]
-    [StepUp]
+    [StepUp(StepUpCategories.Accounts)]
     public Task<AccountDto> Unlock(Guid id, CancellationToken cancellationToken) => SetLockedAsync(id, locked: false, cancellationToken);
 
     /// <summary>A person's second factors as an admin sees them: what their groups ask, what they set up, the recovery codes left.</summary>
@@ -202,7 +202,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
     /// </summary>
     [HttpDelete("{id:guid}/second-factors")]
     [GuardFeature(nameof(GuardFeatures.TwoFactor))]
-    [StepUp]
+    [StepUp(StepUpCategories.Security)]
     public async Task<NoContentResult> ResetSecondFactors(Guid id, [FromServices] Services.TwoFactor.SecondFactors secondFactors, CancellationToken cancellationToken)
     {
         if (id == CurrentAccountId)
@@ -282,7 +282,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
     /// </summary>
     [HttpPost("{id:guid}/emails")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Accounts)]
     public async Task<AccountEmailsDto> AddEmail(Guid id, [FromBody] AddEmailInput input, CancellationToken cancellationToken)
     {
         Account account = await AccountAsync(id, cancellationToken);
@@ -295,7 +295,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
 
     [HttpDelete("{id:guid}/emails/{emailId:guid}")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Accounts)]
     public async Task<AccountEmailsDto> RemoveEmail(Guid id, Guid emailId, CancellationToken cancellationToken)
     {
         Account account = await AccountAsync(id, cancellationToken);
@@ -309,7 +309,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
     /// <summary>Where mail goes: one of the account's verified addresses, or null for its directory's.</summary>
     [HttpPut("{id:guid}/mail-to")]
     [Authorize(Policy = GuardPolicies.Admin)]
-    [StepUp]
+    [StepUp(StepUpCategories.Accounts)]
     public async Task<AccountEmailsDto> MailTo(Guid id, [FromBody] MailToInput input, CancellationToken cancellationToken)
     {
         Account account = await AccountAsync(id, cancellationToken);
@@ -345,7 +345,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
     /// </summary>
     [HttpPost("{id:guid}/merge")]
     [GuardFeature(nameof(GuardFeatures.Merges))]
-    [StepUp]
+    [StepUp(StepUpCategories.Roles)]
     public async Task<AccountMergeDto> Merge(Guid id, [FromBody] MergeInput input, CancellationToken cancellationToken)
     {
         await EnsureMergeAsync(id, input.SurvivorId, cancellationToken);
@@ -384,7 +384,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
 
     /// <summary>Corrects an internal account's display name; a directory's account is corrected in its directory.</summary>
     [HttpPut("{id:guid}/name")]
-    [StepUp]
+    [StepUp(StepUpCategories.Accounts)]
     public async Task<AccountNameDto> Rename(Guid id, [FromBody] AccountNameInput input, [FromServices] AccountCorrections corrections, CancellationToken cancellationToken)
     {
         Account account = await AccountAsync(id, cancellationToken);
@@ -397,7 +397,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
 
     /// <summary>One of an internal account's confirmed addresses becomes its primary; the one before is told.</summary>
     [HttpPost("{id:guid}/emails/{emailId:guid}/primary")]
-    [StepUp]
+    [StepUp(StepUpCategories.Accounts)]
     public async Task<AccountEmailsDto> SetPrimary(Guid id, Guid emailId, [FromServices] AccountCorrections corrections, CancellationToken cancellationToken)
     {
         Account account = await AccountAsync(id, cancellationToken);
@@ -440,7 +440,7 @@ public class MergesController(AccountMergeService merges, GuardDb guardDb) : Gua
 
     /// <summary>Asks the plugins that haven't finished the merge (they failed, or were off) to move their rows now.</summary>
     [HttpPost("{id:guid}/resume")]
-    [StepUp]
+    [StepUp(StepUpCategories.Roles)]
     public async Task<AccountMergeDto> Resume(Guid id, CancellationToken cancellationToken)
     {
         await EnsureBothAsync(await merges.GetAsync(id, cancellationToken), cancellationToken);
@@ -477,7 +477,7 @@ public sealed record AccountNameDto(string DisplayName)
 public class MyAccountController(AccountCorrections corrections, AccountEmailService emails, SecurityLog audit, SelfServiceLimiter limiter) : GuardControllerBase
 {
     [HttpPut("me/name")]
-    [StepUp]
+    [StepUp(StepUpCategories.Profile)]
     public async Task<AccountNameDto> Rename([FromBody] AccountNameInput input, CancellationToken cancellationToken)
     {
         await LimitAsync(cancellationToken);
@@ -489,7 +489,7 @@ public class MyAccountController(AccountCorrections corrections, AccountEmailSer
     }
 
     [HttpPost("me/emails/{emailId:guid}/primary")]
-    [StepUp]
+    [StepUp(StepUpCategories.Profile)]
     public async Task<AccountEmailsDto> SetPrimary(Guid emailId, CancellationToken cancellationToken)
     {
         await LimitAsync(cancellationToken);
@@ -522,7 +522,7 @@ public class MyEmailsController(AccountEmailService emails, SelfServiceLimiter l
 
     /// <summary>Adds an address and mails a link to it; it counts once the link is followed.</summary>
     [HttpPost("me/emails")]
-    [StepUp]
+    [StepUp(StepUpCategories.Profile)]
     [Authorize]
     public async Task<AccountEmailsDto> Add([FromBody] AddEmailInput input, CancellationToken cancellationToken)
     {
@@ -535,7 +535,7 @@ public class MyEmailsController(AccountEmailService emails, SelfServiceLimiter l
     public Task<AccountEmailsDto> Remove(Guid emailId, CancellationToken cancellationToken) => emails.RemoveAsync(CurrentAccountId, emailId, cancellationToken);
 
     [HttpPut("me/mail-to")]
-    [StepUp]
+    [StepUp(StepUpCategories.Profile)]
     [Authorize]
     public Task<AccountEmailsDto> MailTo([FromBody] MailToInput input, CancellationToken cancellationToken) =>
         emails.SetMailToAsync(CurrentAccountId, input.Email, cancellationToken);
