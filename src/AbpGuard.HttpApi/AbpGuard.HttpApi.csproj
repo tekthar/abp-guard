@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>AbpGuard.HttpApi: AbpGuard's API over HTTP. Sign-in and sessions, OpenIddict's authorize and token endpoints, accounts, groups, directories, roles and grants, tokens, second factors, the security log and feed, privacy (export, erasure, retention, the notice), and a person's own security page, under api/guard.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\AbpGuard\AbpGuard.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AbpGuard.Tests" />
+  </ItemGroup>
+
+</Project>

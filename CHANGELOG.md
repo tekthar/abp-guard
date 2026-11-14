@@ -6,6 +6,28 @@ change the API.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-14
+
+Guard's API is a package of its own, AbpGuard.HttpApi, as an ABP module's controllers are (`*.HttpApi`). No new tables or
+columns, and the routes, shapes and behaviour are the same.
+
+### Changed
+
+- **The controllers moved to `AbpGuard.HttpApi`** (module `AbpGuardHttpApiModule`, which depends on `AbpGuardModule`):
+  sign-in and sessions, OpenIddict's `/connect/*` handling, and everything under `api/guard/*`. Their types keep the
+  namespace `AbpGuard.Controllers`, so code that names a DTO or a controller only needs the new package. `AbpGuard` alone
+  is now the services, the tables and the seams, for a worker or a host that serves no API of Guard's.
+- `GuardEvents` and `GuardOidc` stay in `AbpGuard` (same namespace), as its services use them; the security settings'
+  loader is `GuardSecuritySettings.LoadAsync`, and `SecuritySettingsController.LoadAsync` still calls it.
+
+### Upgrading
+
+- Reference `AbpGuard.HttpApi` 0.5.0 (it brings `AbpGuard`), and put `typeof(AbpGuardHttpApiModule)` in your module's
+  `[DependsOn]` in place of, or beside, `typeof(AbpGuardModule)`. Without it, the host has no sign-in, `/connect/*` or
+  `api/guard/*` endpoints of Guard's.
+- Keep every AbpGuard package at the same version (`AbpGuard`, `AbpGuard.Contracts`, `AbpGuard.Acting`,
+  `AbpGuard.HttpApi`).
+
 ## [0.4.0] - 2026-11-14
 
 The security log's feed can sign under a host's former header names too. No new tables or columns.

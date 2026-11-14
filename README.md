@@ -38,7 +38,8 @@ On [nuget.org](https://www.nuget.org/packages?q=AbpGuard):
 |---|---|
 | `AbpGuard.Contracts` | The public contracts: lookups, the directory connector interface, account and group events. No ABP, EF Core or OpenIddict. |
 | `AbpGuard.Acting` | The acting context (whose rights a request uses and who acts), step-up, read-only requests, error codes, the names Guard writes. |
-| `AbpGuard` | The ABP module: domain, services, controllers, the EF Core contexts and their migrations. |
+| `AbpGuard` | The ABP module: domain, services, the EF Core contexts and their migrations, the seams. |
+| `AbpGuard.HttpApi` | The API (since 0.5.0): sign-in and sessions, OpenIddict's `/connect/*`, and `api/guard/*`; `AbpGuardHttpApiModule` brings `AbpGuardModule`. |
 
 Coming from ABP's module template? [Where ABP's layers are in this repository](docs/abp-layers.md).
 
@@ -50,7 +51,7 @@ Coming from ABP's module template? [Where ABP's layers are in this repository](d
 builder.Host.UseAutofac();
 // Guard protects secrets with the Data Protection key ring: keep it in Guard's database so every server reads the same keys.
 builder.Services.AddDataProtection().SetApplicationName("my-product").AddGuardKeyRing();
-await builder.AddApplicationAsync<MyHostModule>();   // [DependsOn(typeof(AbpGuardModule))]
+await builder.AddApplicationAsync<MyHostModule>();   // [DependsOn(typeof(AbpGuardHttpApiModule))]
 
 WebApplication app = builder.Build();
 await GuardDatabase.MigrateAsync(app.Services);

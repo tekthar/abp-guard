@@ -35,7 +35,7 @@ public class StepUpCoverageTests
     {
         List<string> missing = [];
         List<string> seen = [];
-        foreach (Type controller in typeof(AbpGuardModule).Assembly.GetTypes().Where(t => t.IsClass && !t.IsAbstract && t.Name.EndsWith("Controller", StringComparison.Ordinal)))
+        foreach (Type controller in typeof(AbpGuardHttpApiModule).Assembly.GetTypes().Where(t => t.IsClass && !t.IsAbstract && t.Name.EndsWith("Controller", StringComparison.Ordinal)))
         {
             bool adminClass = IsAdmin(controller);
             foreach (MethodInfo action in controller.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly))

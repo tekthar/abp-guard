@@ -23,7 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\AbpGuard\AbpGuard.csproj" />
+    <ProjectReference Include="..\..\src\AbpGuard.HttpApi\AbpGuard.HttpApi.csproj" />
   </ItemGroup>
 
 </Project>

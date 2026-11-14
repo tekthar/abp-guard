@@ -374,7 +374,7 @@ public sealed class SecondFactors(
     /// </summary>
     private async Task<List<SecondFactorSenderDto>> SendersAsync(GuardDbContext db, Account account, CancellationToken cancellationToken)
     {
-        List<string> allowed = (await Controllers.SecuritySettingsController.LoadAsync(db, cancellationToken)).SecondFactorMethods;
+        List<string> allowed = (await GuardSecuritySettings.LoadAsync(db, cancellationToken)).SecondFactorMethods;
         if (allowed.Count == 0)
         {
             return [];
@@ -426,7 +426,7 @@ public sealed class SecondFactors(
         (SecondFactorSenderDto? sender, string? error, string? username, string? code) = await guardDb.RunAsync<(SecondFactorSenderDto?, string?, string?, string?)>(async db =>
         {
             Account account = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == accountId, cancellationToken);
-            if (!(await Controllers.SecuritySettingsController.LoadAsync(db, cancellationToken)).SecondFactorMethods.Contains(method!)
+            if (!(await GuardSecuritySettings.LoadAsync(db, cancellationToken)).SecondFactorMethods.Contains(method!)
                 || await ModeAsync(db, account, cancellationToken) == TwoFactorModes.Strong)
             {
                 return (null, "method_not_allowed", account.Username, null);
@@ -554,7 +554,7 @@ public sealed class SecondFactors(
         // still allows the method and no strong group asks for the app.
         if (SecondFactorKinds.IsSent(method))
         {
-            if (strong || !(await Controllers.SecuritySettingsController.LoadAsync(db, cancellationToken)).SecondFactorMethods.Contains(method!))
+            if (strong || !(await GuardSecuritySettings.LoadAsync(db, cancellationToken)).SecondFactorMethods.Contains(method!))
             {
                 return false;
             }

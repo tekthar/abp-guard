@@ -3,6 +3,7 @@
     <Project Path="src/AbpGuard.Contracts/AbpGuard.Contracts.csproj" />
     <Project Path="src/AbpGuard.Acting/AbpGuard.Acting.csproj" />
     <Project Path="src/AbpGuard/AbpGuard.csproj" />
+    <Project Path="src/AbpGuard.HttpApi/AbpGuard.HttpApi.csproj" />
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/AbpGuard.SampleHost/AbpGuard.SampleHost.csproj" />

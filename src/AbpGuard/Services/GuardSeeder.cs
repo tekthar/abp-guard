@@ -90,7 +90,7 @@ public class GuardSeeder(GuardDb guardDb, AccountProjector projector, IConfigura
 
         // admins must use a second factor on a production site, and is offered one in Development so dev servers and
         // test scripts sign in as before. Once, so an admin's later choice stays.
-        SecuritySettings settings = await Controllers.SecuritySettingsController.LoadAsync(db, cancellationToken);
+        SecuritySettings settings = await GuardSecuritySettings.LoadAsync(db, cancellationToken);
         if (!settings.AdminsTwoFactorSeeded)
         {
             Group admins = await db.Groups.FirstAsync(g => g.Id == GuardConstants.AdminsGroupId, cancellationToken);

@@ -88,18 +88,8 @@ public class SecuritySettingsController(GuardDb guardDb, SecurityLog audit) : Gu
     }
 
     /// <summary>The site's security settings, made with the defaults the first time they're asked for.</summary>
-    public static async Task<SecuritySettings> LoadAsync(GuardDbContext db, CancellationToken cancellationToken)
-    {
-        SecuritySettings? settings = await db.SecuritySettings.FirstOrDefaultAsync(s => s.Id == SecuritySettings.SingletonId, cancellationToken);
-        if (settings is null)
-        {
-            settings = new SecuritySettings(SecuritySettings.SingletonId);
-            db.SecuritySettings.Add(settings);
-            await db.SaveChangesAsync(cancellationToken);
-        }
-
-        return settings;
-    }
+    /// <summary>The site's security settings (<see cref="GuardSecuritySettings.LoadAsync"/>), kept here for code that called it.</summary>
+    public static Task<SecuritySettings> LoadAsync(GuardDbContext db, CancellationToken cancellationToken) => GuardSecuritySettings.LoadAsync(db, cancellationToken);
 
     private static SecuritySettingsDto ToDto(SecuritySettings s) => new(
         s.RetentionDays, SecuritySettings.MinRetentionDays, SecuritySettings.MaxRetentionDays,

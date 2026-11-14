@@ -6,7 +6,7 @@ using Volo.Abp.Modularity;
 namespace AbpGuard.SampleHost;
 
 /// <summary>Guard's module and ABP's, and Guard's controllers: all a host needs.</summary>
-[DependsOn(typeof(AbpAutofacModule), typeof(AbpGuardModule))]
+[DependsOn(typeof(AbpAutofacModule), typeof(AbpGuardHttpApiModule))]
 public class SampleHostModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context) =>

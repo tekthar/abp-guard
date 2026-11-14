@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AbpGuard.Tests" />
+    <!-- The API, a package of its own since 0.5.0, still reaches what the controllers always did. -->
+    <InternalsVisibleTo Include="AbpGuard.HttpApi" />
   </ItemGroup>
 
   <ItemGroup>
