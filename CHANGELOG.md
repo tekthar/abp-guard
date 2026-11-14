@@ -6,6 +6,25 @@ change the API.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-14
+
+Accounts and groups in pages, as ABP's lists page. No new tables or columns; every other route is as it was.
+
+### Added
+
+- `GET api/guard/accounts/page` and `GET api/guard/groups/page`: ABP's `PagedAndSortedResultRequestDto` in
+  (`SkipCount`, `MaxResultCount` 25 unless given and at most ABP's 1,000, `Sorting` as `field` or `field desc`,
+  several by commas) and `PagedResultDto` out (`totalCount`, `items`). Accounts take the list's search as `Filter` and
+  its `Status`, and sort by username, displayName, email, status, createdAt or lastLoginAt; groups take `Filter`,
+  `DirectoryId` and `Kind`, and sort by name, kind or directory (its name). Ties go by id, so a page holds still while
+  names change; a sort the list doesn't take is a 400 validation error. `AccountPageInput`, `GroupPageInput` and
+  `GuardPaging` in AbpGuard.HttpApi.
+
+### Changed
+
+- `GET api/guard/accounts` and `GET api/guard/groups` are as they were (every match by name, at most 500): what
+  pickers search.
+
 ## [0.5.0] - 2026-11-14
 
 Guard's API is a package of its own, AbpGuard.HttpApi, as an ABP module's controllers are (`*.HttpApi`). No new tables or

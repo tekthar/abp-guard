@@ -656,6 +656,56 @@ public sealed partial class GuardAloneTests : IAsyncLifetime
             step.GetProperty("methods").EnumerateArray().Select(m => m.GetString()!).ToArray());
     }
 
+    [Fact]
+    public async Task Accounts_and_groups_page_in_ABPs_shape_sorted_by_the_fields_a_list_allows()
+    {
+        HttpClient admin = Client();
+        string csrf = await SignInAsync(admin, "admin", AdminPassword);
+        foreach ((string user, string name) in new[] { ("pg-cara", "Cara Page"), ("pg-abel", "Abel Page"), ("pg-bree", "Bree Page") })
+        {
+            Assert.Equal(HttpStatusCode.OK, (await SendAsync(admin, csrf, HttpMethod.Post, "/api/guard/accounts",
+                new { username = user, displayName = name, email = $"{user}@example.test", password = "Page-Pass-12345" })).StatusCode);
+        }
+
+        // ABP's paging: totalCount over the filter, items by the sort, ties by id; 25 a page unless asked.
+        using (JsonDocument first = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/accounts/page?filter=pg-&sorting=displayName%20desc&maxResultCount=2")))
+        {
+            Assert.Equal(3, first.RootElement.GetProperty("totalCount").GetInt32());
+            Assert.Equal(["Cara Page", "Bree Page"], first.RootElement.GetProperty("items").EnumerateArray().Select(a => a.GetProperty("displayName").GetString()).ToArray());
+        }
+
+        using (JsonDocument second = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/accounts/page?filter=pg-&sorting=displayName%20desc&skipCount=2&maxResultCount=2")))
+        {
+            Assert.Equal(["Abel Page"], second.RootElement.GetProperty("items").EnumerateArray().Select(a => a.GetProperty("displayName").GetString()).ToArray());
+        }
+
+        using (JsonDocument byUsername = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/accounts/page?filter=pg-")))
+        {
+            Assert.Equal(["pg-abel", "pg-bree", "pg-cara"], byUsername.RootElement.GetProperty("items").EnumerateArray().Select(a => a.GetProperty("username").GetString()).ToArray());
+        }
+
+        // A sort the list doesn't take, or a page past ABP's ceiling, is a validation error, never ignored.
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/guard/accounts/page?sorting=password")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/guard/accounts/page?sorting=username%20sideways")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/guard/accounts/page?maxResultCount=5000")).StatusCode);
+
+        // The pickers' list is as it was: every match, no paging.
+        using (JsonDocument list = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/accounts?search=pg-")))
+        {
+            Assert.Equal(3, list.RootElement.GetArrayLength());
+        }
+
+        foreach (string group in new[] { "pg-gamma", "pg-alpha", "pg-beta" })
+        {
+            Assert.Equal(HttpStatusCode.OK, (await SendAsync(admin, csrf, HttpMethod.Post, "/api/guard/groups", new { name = group, description = (string?)null, directoryId = (Guid?)null })).StatusCode);
+        }
+
+        using JsonDocument groups = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/groups/page?filter=pg-&sorting=directory,name%20desc"));
+        Assert.Equal(3, groups.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Equal(["pg-gamma", "pg-beta", "pg-alpha"], groups.RootElement.GetProperty("items").EnumerateArray().Select(g => g.GetProperty("name").GetString()).ToArray());
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/guard/groups/page?sorting=members")).StatusCode);
+    }
+
     private static async Task<HttpResponseMessage> SendAsync(HttpClient client, string csrf, HttpMethod method, string path, object body)
     {
         using HttpRequestMessage request = new(method, path) { Content = JsonContent.Create(body) };

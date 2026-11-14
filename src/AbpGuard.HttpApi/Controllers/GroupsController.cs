@@ -6,6 +6,7 @@ using AbpGuard.Domain;
 using AbpGuard.Services;
 using AbpGuard.Acting;
 using Volo.Abp;
+using Volo.Abp.Application.Dtos;
 using Volo.Abp.Domain.Entities;
 
 namespace AbpGuard.Controllers;
@@ -17,30 +18,58 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
     /// <summary>What Guard's messages call the host (Texts.ProductName).</summary>
     private string Product => options.Value.Texts.Product();
 
+    /// <summary>The groups by name, at most 500: what pickers search. A list that pages takes <see cref="Page"/>.</summary>
     [HttpGet]
     public Task<List<GroupDto>> List([FromQuery] string? search, [FromQuery] Guid? directoryId, [FromQuery] string? kind, CancellationToken cancellationToken) =>
         guardDb.RunAsync(async db =>
         {
-            IQueryable<Group> query = db.Groups.AsNoTracking();
-            if (!string.IsNullOrWhiteSpace(kind))
-            {
-                query = query.Where(g => g.Kind == kind);
-            }
-
-            if (!string.IsNullOrWhiteSpace(search))
-            {
-                string s = GuardConstants.Normalize(search);
-                query = query.Where(g => g.NormalizedName.Contains(s));
-            }
-
-            if (directoryId is { } d)
-            {
-                query = query.Where(g => g.DirectoryId == d);
-            }
-
-            List<Group> groups = await query.OrderBy(g => g.Name).Take(500).ToListAsync(cancellationToken);
+            List<Group> groups = await Filtered(db, search, directoryId, kind).OrderBy(g => g.Name).Take(500).ToListAsync(cancellationToken);
             return await ToDtosAsync(db, groups, cancellationToken);
         }, cancellationToken: cancellationToken);
+
+    /// <summary>
+    /// A page of the groups, in ABP's shape: <c>totalCount</c> and <c>items</c>, the list's search, directory and kind,
+    /// sorted by name, kind or directory (its name; name unless asked).
+    /// </summary>
+    [HttpGet("page")]
+    public Task<PagedResultDto<GroupDto>> Page([FromQuery] GroupPageInput input, CancellationToken cancellationToken) =>
+        guardDb.RunAsync(async db =>
+        {
+            IQueryable<Group> query = Filtered(db, input.Filter, input.DirectoryId, input.Kind);
+            int total = await query.CountAsync(cancellationToken);
+            Dictionary<string, System.Linq.Expressions.LambdaExpression> sorts = new(StringComparer.OrdinalIgnoreCase)
+            {
+                ["name"] = GuardPaging.By<Group, string>(g => g.Name),
+                ["kind"] = GuardPaging.By<Group, string>(g => g.Kind),
+                ["directory"] = GuardPaging.By<Group, string?>(g => db.Directories.Where(d => d.Id == g.DirectoryId).Select(d => d.Name).FirstOrDefault()),
+            };
+            List<Group> groups = await GuardPaging.Sort(query, input.Sorting, sorts, "name", g => g.Id)
+                .Skip(input.SkipCount).Take(input.MaxResultCount).ToListAsync(cancellationToken);
+            return new PagedResultDto<GroupDto>(total, await ToDtosAsync(db, groups, cancellationToken));
+        }, cancellationToken: cancellationToken);
+
+    /// <summary>The groups with the list's search, directory and kind.</summary>
+    private static IQueryable<Group> Filtered(GuardDbContext db, string? search, Guid? directoryId, string? kind)
+    {
+        IQueryable<Group> query = db.Groups.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(kind))
+        {
+            query = query.Where(g => g.Kind == kind);
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            string s = GuardConstants.Normalize(search);
+            query = query.Where(g => g.NormalizedName.Contains(s));
+        }
+
+        if (directoryId is { } d)
+        {
+            query = query.Where(g => g.DirectoryId == d);
+        }
+
+        return query;
+    }
 
     [HttpGet("{id:guid}")]
     public Task<GroupDetailDto> Get(Guid id, CancellationToken cancellationToken) =>

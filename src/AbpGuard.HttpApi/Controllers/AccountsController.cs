@@ -6,7 +6,9 @@ using AbpGuard.Domain;
 using AbpGuard.Services;
 using AbpGuard.Acting;
 using Casl;
+using AbpGuard.Data;
 using Volo.Abp;
+using Volo.Abp.Application.Dtos;
 using Volo.Abp.Domain.Entities;
 
 namespace AbpGuard.Controllers;
@@ -21,6 +23,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
     SecurityLog audit, AccountSessions sessions)
     : GuardControllerBase
 {
+    /// <summary>The accounts the caller may read, by username, at most 500: what pickers search. A list that pages takes <see cref="Page"/>.</summary>
     [HttpGet]
     public async Task<List<AccountDto>> List([FromQuery] string? search, [FromQuery] string? status, CancellationToken cancellationToken)
     {
@@ -29,22 +32,58 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
         return await guardDb.RunAsync(async db =>
         {
             Dictionary<Guid, string> directories = await db.Directories.ToDictionaryAsync(d => d.Id, d => d.Name, cancellationToken);
-            IQueryable<Account> query = db.Accounts.AsNoTracking().AccessibleBy(ability, "read"); // filtered in SQL
-            if (!string.IsNullOrWhiteSpace(search))
-            {
-                string s = GuardConstants.Normalize(search), like = SqlLike.Containing(s);
-                query = query.Where(a => a.NormalizedUsername.Contains(s) || EF.Functions.ILike(a.DisplayName, like) || (a.OtherNames != null && EF.Functions.ILike(a.OtherNames, like)) || (a.Email != null && EF.Functions.ILike(a.Email, like)));
-            }
-
-            if (Enum.TryParse(status, ignoreCase: true, out AccountStatus parsed))
-            {
-                query = query.Where(a => a.Status == parsed);
-            }
-
-            return (await query.OrderBy(a => a.Username).Take(500).ToListAsync(cancellationToken))
+            return (await Filtered(db, ability, search, status).OrderBy(a => a.Username).Take(500).ToListAsync(cancellationToken))
                 .Select(a => AccountDto.From(a, directories.GetValueOrDefault(a.DirectoryId, "?")))
                 .ToList();
         }, cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// A page of the accounts the caller may read, in ABP's shape: <c>totalCount</c> and <c>items</c>, the list's search
+    /// and status, sorted by username, displayName, email, status, createdAt or lastLoginAt (username unless asked).
+    /// </summary>
+    [HttpGet("page")]
+    public async Task<PagedResultDto<AccountDto>> Page([FromQuery] AccountPageInput input, CancellationToken cancellationToken)
+    {
+        Casl.Ability ability = await AbilityAsync(cancellationToken);
+        Ensure(ability, "read", "Account");
+        return await guardDb.RunAsync(async db =>
+        {
+            IQueryable<Account> query = Filtered(db, ability, input.Filter, input.Status);
+            int total = await query.CountAsync(cancellationToken);
+            List<Account> page = await GuardPaging.Sort(query, input.Sorting, AccountSorts, "username", a => a.Id)
+                .Skip(input.SkipCount).Take(input.MaxResultCount).ToListAsync(cancellationToken);
+            Dictionary<Guid, string> directories = await db.Directories.ToDictionaryAsync(d => d.Id, d => d.Name, cancellationToken);
+            return new PagedResultDto<AccountDto>(total, page.Select(a => AccountDto.From(a, directories.GetValueOrDefault(a.DirectoryId, "?"))).ToList());
+        }, cancellationToken: cancellationToken);
+    }
+
+    private static readonly Dictionary<string, System.Linq.Expressions.LambdaExpression> AccountSorts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["username"] = GuardPaging.By<Account, string>(a => a.Username),
+        ["displayName"] = GuardPaging.By<Account, string>(a => a.DisplayName),
+        ["email"] = GuardPaging.By<Account, string?>(a => a.Email),
+        ["status"] = GuardPaging.By<Account, AccountStatus>(a => a.Status),
+        ["createdAt"] = GuardPaging.By<Account, DateTime>(a => a.CreatedAt),
+        ["lastLoginAt"] = GuardPaging.By<Account, DateTime?>(a => a.LastLoginAt),
+    };
+
+    /// <summary>The accounts the ability may read (filtered in SQL), with the list's search and status.</summary>
+    private static IQueryable<Account> Filtered(GuardDbContext db, Casl.Ability ability, string? search, string? status)
+    {
+        IQueryable<Account> query = db.Accounts.AsNoTracking().AccessibleBy(ability, "read");
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            string s = GuardConstants.Normalize(search), like = SqlLike.Containing(s);
+            query = query.Where(a => a.NormalizedUsername.Contains(s) || EF.Functions.ILike(a.DisplayName, like) || (a.OtherNames != null && EF.Functions.ILike(a.OtherNames, like)) || (a.Email != null && EF.Functions.ILike(a.Email, like)));
+        }
+
+        if (Enum.TryParse(status, ignoreCase: true, out AccountStatus parsed))
+        {
+            query = query.Where(a => a.Status == parsed);
+        }
+
+        return query;
     }
 
     [HttpGet("{id:guid}")]
