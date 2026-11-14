@@ -42,9 +42,12 @@ public sealed class GuardPersonalData(Microsoft.Extensions.Options.IOptions<Guar
             PersonalDataSubjects.Accounts, [Identity], PersonalDataKept.WithAccount, [], []),
         new("guard.sign-in-secrets", Owner,
             new("Sign-in secrets", "أسرار الدخول"),
-            new("Personal access tokens, second factors, recovery codes, codes sent for a second step and sign-ins waiting for one: kept hashed or encrypted, never shown again.",
-                "رموز الوصول الشخصية والعوامل الثانية ورموز الاسترداد والرموز المرسلة للخطوة الثانية وعمليات الدخول التي تنتظرها: تُحفظ مجزّأة أو مشفّرة ولا تُعرض مرة أخرى."),
-            ["guard.personal_access_tokens", "guard.second_factors", "guard.recovery_codes", "guard.sent_codes", "guard.sign_in_tickets"], [],
+            new("Personal access tokens, second factors, recovery codes, codes sent for a second step and sign-ins waiting for one: kept hashed or encrypted, never shown again. "
+                + "Passkeys: each device's public key, its name, its provider and when it was made and last used, and the challenges of ceremonies under way.",
+                "رموز الوصول الشخصية والعوامل الثانية ورموز الاسترداد والرموز المرسلة للخطوة الثانية وعمليات الدخول التي تنتظرها: تُحفظ مجزّأة أو مشفّرة ولا تُعرض مرة أخرى. "
+                + "ومفاتيح المرور: المفتاح العام لكل جهاز واسمه ومزوّده ومتى أُنشئ وآخر استخدام له، وتحديات العمليات الجارية."),
+            ["guard.personal_access_tokens", "guard.second_factors", "guard.recovery_codes", "guard.sent_codes", "guard.sign_in_tickets", "guard.passkeys",
+                "guard.passkey_challenges"], [],
             PersonalDataSubjects.Accounts, [Credentials, Security], PersonalDataKept.WithAccount, [], []),
         new("guard.sessions", Owner,
             new("Sessions", "الجلسات"),

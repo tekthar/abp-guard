@@ -31,6 +31,18 @@ public sealed class ActingContext(IHttpContextAccessor http, Microsoft.Extension
     /// <summary>When the person last proved who they are, in seconds since 1970 (OpenID Connect's claim).</summary>
     public const string AuthTimeClaim = "auth_time";
 
+    /// <summary>
+    /// When the person last proved who they are strongly, in seconds since 1970: a sign-in whose second step was a passkey
+    /// or the authenticator app, or a strong step-up. It ages on the same window as <see cref="AuthTimeClaim"/>.
+    /// </summary>
+    public const string StrongAuthTimeClaim = "strong_auth_time";
+
+    /// <summary>
+    /// When the person signed in with a recovery code, in seconds since 1970: it counts as strong for setting up a new
+    /// second factor alone, so someone who lost their device isn't locked out.
+    /// </summary>
+    public const string RecoveryAuthTimeClaim = "recovery_auth_time";
+
     private readonly GuardNames _names = names?.Value ?? new GuardNames();
 
     private bool _read;
@@ -40,6 +52,8 @@ public sealed class ActingContext(IHttpContextAccessor http, Microsoft.Extension
     private string? _mode;
     private Guid? _sessionId;
     private DateTimeOffset? _authTime;
+    private DateTimeOffset? _strongAuthTime;
+    private DateTimeOffset? _recoveryAuthTime;
     private Guid? _tokenId;
     private bool _tokenReadOnly;
     private IReadOnlyList<Guid>? _tokenProjects;
@@ -64,6 +78,12 @@ public sealed class ActingContext(IHttpContextAccessor http, Microsoft.Extension
 
     /// <summary>When the person last proved who they are: signing in, or a step-up since (the token's <c>auth_time</c>).</summary>
     public DateTimeOffset? AuthTime => Read()._authTime;
+
+    /// <summary>When the person last proved who they are strongly (the token's <c>strong_auth_time</c>): a passkey, or the password and the app.</summary>
+    public DateTimeOffset? StrongAuthTime => Read()._strongAuthTime;
+
+    /// <summary>When the person signed in with a recovery code (the token's <c>recovery_auth_time</c>), which counts for adding a factor alone.</summary>
+    public DateTimeOffset? RecoveryAuthTime => Read()._recoveryAuthTime;
 
     /// <summary>The personal access token the request came with, if any: it can't step up, and it may only read or only some projects.</summary>
     public Guid? TokenId => Read()._tokenId;
@@ -126,6 +146,16 @@ public sealed class ActingContext(IHttpContextAccessor http, Microsoft.Extension
         if (long.TryParse(user.FindFirstValue(AuthTimeClaim), out long seconds))
         {
             _authTime = DateTimeOffset.FromUnixTimeSeconds(seconds);
+        }
+
+        if (long.TryParse(user.FindFirstValue(StrongAuthTimeClaim), out long strong))
+        {
+            _strongAuthTime = DateTimeOffset.FromUnixTimeSeconds(strong);
+        }
+
+        if (long.TryParse(user.FindFirstValue(RecoveryAuthTimeClaim), out long recovery))
+        {
+            _recoveryAuthTime = DateTimeOffset.FromUnixTimeSeconds(recovery);
         }
 
         if (Guid.TryParse(user.FindFirstValue(_names.TokenClaim), out Guid token))

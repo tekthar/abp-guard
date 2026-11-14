@@ -256,6 +256,15 @@ public class AbpGuardModule : AbpModule
             context.ServiceProvider.GetRequiredService<ILogger<AbpGuardModule>>().LogWarning(
                 "The sign-in page shows {Count} test accounts with their passwords ({Section}): only for a test site", shown.Count, TestAccounts.Section);
         }
+
+        // Passkeys belong to the site's address: without one, adding or using a passkey fails, and says what to set.
+        if (!context.ServiceProvider.GetRequiredService<IHostEnvironment>().IsDevelopment()
+            && Services.TwoFactor.Passkeys.Resolve(context.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<GuardOptions>>().Value,
+                context.ServiceProvider.GetRequiredService<IConfiguration>()) is null)
+        {
+            context.ServiceProvider.GetRequiredService<ILogger<AbpGuardModule>>().LogError(
+                "Guard: passkeys have no relying party. Set Guard:PublicUrl, or Guard:Passkeys:RpId and Guard:Passkeys:Origins; until then no passkey can be added or used");
+        }
     }
 }
 

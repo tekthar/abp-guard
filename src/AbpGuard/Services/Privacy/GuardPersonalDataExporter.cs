@@ -117,6 +117,15 @@ public sealed class GuardPersonalDataExporter(GuardDb guardDb, OAuthApps apps, A
             ["guard.sign-in-secrets/second-factors"] = [.. (await db.SecondFactors.AsNoTracking().Where(f => f.AccountId == id).OrderBy(f => f.CreatedAt).ToListAsync(ct))
                 .Select(f => new JsonObject { ["kind"] = f.Kind, ["setUpAt"] = f.ConfirmedAt ?? f.CreatedAt, ["lastUsedAt"] = f.LastUsedAt }),
                 new JsonObject { ["recoveryCodesLeft"] = await db.RecoveryCodes.CountAsync(c => c.AccountId == id && c.UsedAt == null, ct) }],
+            // Their passkeys by name and provider: never a key or a credential's id.
+            ["guard.sign-in-secrets/passkeys"] = [.. (await db.Passkeys.AsNoTracking().Where(p => p.AccountId == id).OrderBy(p => p.CreatedAt).ToListAsync(ct))
+                .Select(p => new JsonObject
+                {
+                    ["name"] = p.Name,
+                    ["provider"] = TwoFactor.PasskeyProviders.Name(p.AaGuid),
+                    ["createdAt"] = p.CreatedAt,
+                    ["lastUsedAt"] = p.LastUsedAt,
+                })],
             ["guard.sessions/sessions"] = [.. (await db.WebSessions.AsNoTracking().Where(s => s.AccountId == id).OrderBy(s => s.CreatedAt).ToListAsync(ct))
                 .Select(s => new JsonObject
                 {

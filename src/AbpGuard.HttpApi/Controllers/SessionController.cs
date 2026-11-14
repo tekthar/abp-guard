@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -11,11 +12,20 @@ namespace AbpGuard.Controllers;
 
 public sealed record SessionStartInput(string? Username, string? Password);
 
-/// <summary>A step-up: the password again, and a code of the person's second factor when they have one.</summary>
-public sealed record SessionStepUpInput(string? Password, string? Method = null, string? Code = null);
+/// <summary>
+/// A step-up: the password again, and a code of the person's second factor when they have one; or <c>method: 'passkey'</c>
+/// and the device's answer (<c>credential</c>, its <c>toJSON()</c>) alone.
+/// </summary>
+public sealed record SessionStepUpInput(string? Password, string? Method = null, string? Code = null, JsonElement? Credential = null);
 
-/// <summary>The second step of a sign-in: the ticket, and a code of the method (<c>app</c>, <c>recovery</c>).</summary>
-public sealed record SessionSecondFactorInput(string? Ticket, string? Method, string? Code);
+/// <summary>
+/// The second step of a sign-in: the ticket, and a code of the method (<c>app</c>, <c>recovery</c>, a sent code's), or
+/// <c>method: 'passkey'</c> and the device's answer (<c>credential</c>).
+/// </summary>
+public sealed record SessionSecondFactorInput(string? Ticket, string? Method, string? Code, JsonElement? Credential = null);
+
+/// <summary>A sign-in's ticket, for the options of its second step with a passkey.</summary>
+public sealed record SessionTicketInput(string? Ticket);
 
 /// <summary>
 /// A browser just signed in: its account and preferences, when the session ends unless it's used, and when the person
@@ -23,8 +33,8 @@ public sealed record SessionSecondFactorInput(string? Ticket, string? Method, st
 /// </summary>
 public sealed record SessionDto(AccountDto Account, PreferencesDto Preferences, DateTime ExpiresAt, DateTime AuthTime, bool SecondFactorOffered = false);
 
-/// <summary>When a step-up passed: the session's new proof of who the person is.</summary>
-public sealed record SessionStepUpDto(DateTime AuthTime);
+/// <summary>When a step-up passed: the session's new proof of who the person is, and of a strong one (a passkey, or the password and the app).</summary>
+public sealed record SessionStepUpDto(DateTime AuthTime, DateTime? StrongAuthTime = null);
 
 /// <summary>The phone app's code for a web view: open <c>/api/guard/session/handoff?code=…&amp;next=…</c> before it expires.</summary>
 public sealed record SessionHandoffDto(string Code, DateTime ExpiresAt);
@@ -106,11 +116,42 @@ public class SessionController(AuthService auth, WebSessions sessions, GuardDb g
             return Error(400, "invalid_request", "Expected a JSON body with the sign-in's ticket and a code.");
         }
 
-        Services.TwoFactor.SecondStepResult step = await secondFactors.PassAsync(ticket, input.Method, input.Code, WebClient, ClientIp, cancellationToken);
+        Services.TwoFactor.SecondStepResult step = await secondFactors.PassAsync(ticket, input.Method, input.Code, WebClient, ClientIp, cancellationToken, input.Credential);
         return step.Passed is { } passed
-            ? Ok(await StartSessionAsync(passed.AccountId, cancellationToken))
+            ? Ok(await StartSessionAsync(passed.AccountId, cancellationToken, passed.Strong, passed.Recovery))
             : SecondStepError(step.Error);
     }
+
+    /// <summary>
+    /// The options for a sign-in's second step with a passkey (the browser's <c>PublicKeyCredentialRequestOptionsJSON</c>),
+    /// for the ticket the password gave; its challenge is good once, for five minutes, for this ticket.
+    /// </summary>
+    [HttpPost("second-step/options")]
+    [GuardFeature(nameof(GuardFeatures.TwoFactor))]
+    [AllowAnonymous]
+    public async Task<IActionResult> SecondStepOptions([FromBody] SessionTicketInput input, CancellationToken cancellationToken)
+    {
+        if (WebSessionHandler.IsCrossSite(Request, options.Value.PublicUrl))
+        {
+            return Error(403, "cross_site_request", "This request came from another site and was refused.");
+        }
+
+        Services.TwoFactor.PasskeyOptionsResult asked = input.Ticket is { Length: > 0 } ticket
+            ? await secondFactors.SecondStepOptionsAsync(ticket, cancellationToken)
+            : new Services.TwoFactor.PasskeyOptionsResult(null, "ticket_expired");
+        return asked switch
+        {
+            { Options: { } json } => Content(json, "application/json"),
+            { Error: "no_passkey" } => NoPasskey(),
+            _ => Error(401, "ticket_expired", "This sign-in has expired. Sign in again."),
+        };
+    }
+
+    /// <summary>The answer when the person has no passkey to prove with.</summary>
+    public static ObjectResult NoPasskey() => Error(400, "no_passkey", "You have no passkey here. Use another way.");
+
+    /// <summary>The answer when a passkey's answer was refused: its origin, relying party, challenge or signature.</summary>
+    public static ObjectResult PasskeyRejected() => Error(400, Services.TwoFactor.Passkeys.Rejected, "The passkey couldn't be verified. Try again.");
 
     /// <summary>The answers a failed second step gives.</summary>
     public static ObjectResult SecondStepError(string? error) => error switch
@@ -120,10 +161,12 @@ public class SessionController(AuthService auth, WebSessions sessions, GuardDb g
         _ => Error(401, "ticket_expired", "This sign-in has expired. Sign in again."),
     };
 
-    private async Task<SessionDto> StartSessionAsync(Guid accountId, CancellationToken cancellationToken)
+    private async Task<SessionDto> StartSessionAsync(Guid accountId, CancellationToken cancellationToken, bool strong = false, bool recovery = false)
     {
         await EndPreviousAsync(cancellationToken);
-        (WebSession session, string secret) = await sessions.StartAsync(accountId, Request.Headers.UserAgent.ToString(), ClientIp, cancellationToken: cancellationToken);
+        DateTime now = DateTime.UtcNow;
+        (WebSession session, string secret) = await sessions.StartAsync(accountId, Request.Headers.UserAgent.ToString(), ClientIp, authTime: now,
+            cancellationToken: cancellationToken, strongAuthTime: strong ? now : null, recoveryAuthTime: recovery ? now : null);
         WebSessionHandler.Issue(HttpContext, secret, embedded: false);
         Services.TwoFactor.MySecondFactorsDto mine = await secondFactors.ListAsync(accountId, cancellationToken);
         return await guardDb.RunAsync(async db =>
@@ -150,8 +193,29 @@ public class SessionController(AuthService auth, WebSessions sessions, GuardDb g
     }
 
     /// <summary>
+    /// The options for a step-up with one of the person's passkeys (the browser's <c>PublicKeyCredentialRequestOptionsJSON</c>);
+    /// its challenge is good once, for five minutes, for this session.
+    /// </summary>
+    [HttpPost("step-up/options")]
+    [GuardFeature(nameof(GuardFeatures.TwoFactor))]
+    [Authorize]
+    public async Task<IActionResult> StepUpOptions(CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(User.FindFirst(WebSessionHandler.SessionIdClaim)?.Value, out Guid sessionId))
+        {
+            return Error(400, "not_a_session", "Only a browser's session steps up here.");
+        }
+
+        return await secondFactors.StepUpOptionsAsync(CurrentAccountId, Services.TwoFactor.Passkeys.SessionBinding(sessionId), cancellationToken) is { } json
+            ? Content(json, "application/json")
+            : NoPasskey();
+    }
+
+    /// <summary>
     /// A step-up: the password again, checked by the account's directory, marks the session for the site's
-    /// step-up minutes. A wrong password answers 400 and the session goes on; too many end it (401, cookies cleared).
+    /// step-up minutes. A wrong password answers 400 and the session goes on; too many end it (401, cookies cleared). With
+    /// the authenticator app's code too, or with a passkey alone (<c>method: 'passkey'</c> and its answer), the step-up is
+    /// strong: the answer's <c>strongAuthTime</c> is now as well.
     /// </summary>
     [HttpPost("step-up")]
     [Authorize]
@@ -161,6 +225,26 @@ public class SessionController(AuthService auth, WebSessions sessions, GuardDb g
         if (!Guid.TryParse(User.FindFirst(WebSessionHandler.SessionIdClaim)?.Value, out Guid sessionId))
         {
             return Error(400, "not_a_session", "Only a browser's session steps up here.");
+        }
+
+        // A passkey alone: the device, and the person by its user verification.
+        if (input.Method == Domain.SecondFactorKinds.Passkey && input.Password is not { Length: > 0 })
+        {
+            if (!options.Value.Features.TwoFactor || secondFactors.Disabled)
+            {
+                return PasskeyRejected();
+            }
+
+            string? refused = await secondFactors.StepUpWithPasskeyAsync(CurrentAccountId, Services.TwoFactor.Passkeys.SessionBinding(sessionId), input.Credential,
+                ClientIp, cancellationToken);
+            if (refused is not null)
+            {
+                return refused == "too_many_attempts" ? Error(429, "too_many_attempts", "Too many tries. Try again in 15 minutes.") : PasskeyRejected();
+            }
+
+            return await sessions.MarkSteppedUpAsync(sessionId, strong: true, cancellationToken) is { } proved
+                ? Ok(new SessionStepUpDto(proved.AuthTime, proved.StrongAuthTime))
+                : Error(401, "session_ended", "Your session has ended. Sign in again.");
         }
 
         if (input.Password is not { Length: > 0 } password)
@@ -186,16 +270,17 @@ public class SessionController(AuthService auth, WebSessions sessions, GuardDb g
             return Error(400, "step_up_failed", "The password is incorrect.");
         }
 
-        // A person with a second factor proves it again too.
-        if (await secondFactors.StepUpErrorAsync(CurrentAccountId, input.Method, input.Code, ClientIp, cancellationToken) is { } secondFactorError)
+        // A person with a second factor proves it again too; the app's code with the password makes it strong.
+        Services.TwoFactor.StepUpProof proof = await secondFactors.StepUpAsync(CurrentAccountId, input.Method, input.Code, ClientIp, cancellationToken);
+        if (proof.Error is { } secondFactorError)
         {
             return secondFactorError == "second_factor_required"
                 ? Error(400, "second_factor_required", "Enter the code of your second factor too.")
                 : SecondStepError(secondFactorError);
         }
 
-        return await sessions.MarkSteppedUpAsync(sessionId, cancellationToken) is { } authTime
-            ? Ok(new SessionStepUpDto(authTime))
+        return await sessions.MarkSteppedUpAsync(sessionId, proof.Strong, cancellationToken) is { } stepped
+            ? Ok(new SessionStepUpDto(stepped.AuthTime, stepped.StrongAuthTime))
             : Error(401, "session_ended", "Your session has ended. Sign in again.");
     }
 
@@ -215,7 +300,8 @@ public class SessionController(AuthService auth, WebSessions sessions, GuardDb g
             return Error(400, "not_the_app", "Only the phone app hands its sign-in to a web view.");
         }
 
-        (string code, DateTime expiresAt) = await sessions.HandOffAsync(CurrentAccountId, authorizationId, Acting.AuthTime?.UtcDateTime ?? DateTime.UnixEpoch, cancellationToken);
+        (string code, DateTime expiresAt) = await sessions.HandOffAsync(CurrentAccountId, authorizationId, Acting.AuthTime?.UtcDateTime ?? DateTime.UnixEpoch, cancellationToken,
+            Acting.StrongAuthTime?.UtcDateTime);
         return Ok(new SessionHandoffDto(code, expiresAt));
     }
 
@@ -248,7 +334,7 @@ public class SessionController(AuthService auth, WebSessions sessions, GuardDb g
 
         await EndPreviousAsync(cancellationToken);
         (_, string secret) = await sessions.StartAsync(handoff.AccountId, Request.Headers.UserAgent.ToString(), ClientIp, handoff.AuthorizationId, handoff.AuthTime,
-            cancellationToken);
+            cancellationToken, handoff.StrongAuthTime);
         WebSessionHandler.Issue(HttpContext, secret, embedded: true);
         // A language tag ("ar", "pt-BR"); the web matches it against the site's languages, as it does its switcher's.
         if (lang is { Length: > 0 and <= 35 } && lang.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'))

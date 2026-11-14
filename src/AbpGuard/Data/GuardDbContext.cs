@@ -37,6 +37,8 @@ public class GuardDbContext(DbContextOptions<GuardDbContext> options) : AbpDbCon
     public DbSet<RecoveryCode> RecoveryCodes => Set<RecoveryCode>();
     public DbSet<SignInTicket> SignInTickets => Set<SignInTicket>();
     public DbSet<SentCode> SentCodes => Set<SentCode>();
+    public DbSet<Passkey> Passkeys => Set<Passkey>();
+    public DbSet<PasskeyChallenge> PasskeyChallenges => Set<PasskeyChallenge>();
     public DbSet<PrivacyStoreRecord> PrivacyStores => Set<PrivacyStoreRecord>();
     public DbSet<PrivacySettings> PrivacySettings => Set<PrivacySettings>();
     public DbSet<LegalHold> LegalHolds => Set<LegalHold>();
@@ -329,6 +331,30 @@ public class GuardDbContext(DbContextOptions<GuardDbContext> options) : AbpDbCon
             b.Property(x => x.Method).HasMaxLength(100).IsRequired();
             b.Property(x => x.CodeHash).HasMaxLength(64).IsRequired();
             b.HasIndex(x => new { x.AccountId, x.Method });
+            b.HasIndex(x => x.ExpiresAt);
+        });
+
+        // A passkey: one credential id site-wide, so a device's passkey belongs to one account.
+        builder.Entity<Passkey>(b =>
+        {
+            b.ToTable("passkeys");
+            b.Property(x => x.CredentialId).HasMaxLength(1023).IsRequired();
+            b.Property(x => x.PublicKey).IsRequired();
+            b.Property(x => x.Transports).HasMaxLength(200);
+            b.Property(x => x.Name).HasMaxLength(Passkey.NameLength).IsRequired();
+            b.HasIndex(x => x.CredentialId).IsUnique();
+            b.HasIndex(x => x.AccountId);
+        });
+
+        builder.Entity<PasskeyChallenge>(b =>
+        {
+            b.ToTable("passkey_challenges");
+            b.Property(x => x.ChallengeHash).HasMaxLength(64).IsRequired();
+            b.Property(x => x.Purpose).HasMaxLength(32).IsRequired();
+            b.Property(x => x.Binding).HasMaxLength(200).IsRequired();
+            b.Property(x => x.Options).IsRequired();
+            b.HasIndex(x => x.ChallengeHash).IsUnique();
+            b.HasIndex(x => x.AccountId);
             b.HasIndex(x => x.ExpiresAt);
         });
 

@@ -540,7 +540,7 @@ public class WebSession : Entity<Guid>
     }
 
     public WebSession(Guid id, Guid accountId, string tokenHash, DateTime expiresAt, string? userAgent, string? ip, string? parentAuthorizationId = null,
-        DateTime? authTime = null)
+        DateTime? authTime = null, DateTime? strongAuthTime = null, DateTime? recoveryAuthTime = null)
         : base(id)
     {
         AccountId = accountId;
@@ -548,6 +548,8 @@ public class WebSession : Entity<Guid>
         CreatedAt = DateTime.UtcNow;
         LastSeenAt = CreatedAt;
         AuthTime = authTime ?? CreatedAt;
+        StrongAuthTime = strongAuthTime;
+        RecoveryAuthTime = recoveryAuthTime;
         ExpiresAt = expiresAt;
         UserAgent = userAgent;
         Ip = ip;
@@ -571,6 +573,15 @@ public class WebSession : Entity<Guid>
 
     /// <summary>When the person last proved who they are: the sign-in, or the last step-up.</summary>
     public DateTime AuthTime { get; set; }
+
+    /// <summary>
+    /// When the person last proved who they are strongly: a sign-in whose second step was a passkey or the authenticator
+    /// app, or a strong step-up since. Null when they haven't in this session.
+    /// </summary>
+    public DateTime? StrongAuthTime { get; set; }
+
+    /// <summary>When the session's sign-in was with a recovery code: it counts as strong for setting up a new factor alone.</summary>
+    public DateTime? RecoveryAuthTime { get; set; }
 
     /// <summary>The browser it was made in, and from where, for the person's list of sessions.</summary>
     public string? UserAgent { get; private set; }
@@ -597,13 +608,14 @@ public class SessionHandoff : Entity<Guid>
     {
     }
 
-    public SessionHandoff(Guid id, string codeHash, Guid accountId, string authorizationId, DateTime authTime, DateTime expiresAt)
+    public SessionHandoff(Guid id, string codeHash, Guid accountId, string authorizationId, DateTime authTime, DateTime expiresAt, DateTime? strongAuthTime = null)
         : base(id)
     {
         CodeHash = codeHash;
         AccountId = accountId;
         AuthorizationId = authorizationId;
         AuthTime = authTime;
+        StrongAuthTime = strongAuthTime;
         ExpiresAt = expiresAt;
         CreatedAt = DateTime.UtcNow;
     }
@@ -618,6 +630,9 @@ public class SessionHandoff : Entity<Guid>
 
     /// <summary>When the person last proved who they are, as the app's token says: the web view's session starts with it.</summary>
     public DateTime AuthTime { get; private set; }
+
+    /// <summary>When the person last proved who they are strongly, as the app's token says: the web view's session starts with it too.</summary>
+    public DateTime? StrongAuthTime { get; private set; }
 
     public DateTime CreatedAt { get; private set; }
     public DateTime ExpiresAt { get; private set; }

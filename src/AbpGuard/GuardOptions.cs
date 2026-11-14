@@ -58,6 +58,29 @@ public sealed class GuardOptions
 
     /// <summary>Two-factor sign-in (Guard:TwoFactor:*): the authenticator app's issuer, and what the second step lists.</summary>
     public GuardTwoFactorOptions TwoFactor { get; set; } = new();
+
+    /// <summary>Passkeys (Guard:Passkeys:*): the relying party, the site's address the browser checks.</summary>
+    public GuardPasskeyOptions Passkeys { get; set; } = new();
+}
+
+/// <summary>
+/// The relying party passkeys belong to: the site's address. A passkey works only where its relying party's id is the
+/// site's domain (or a parent of it) and the page's origin is listed: a site moved to a new address keeps its passkeys
+/// only while the old origin stays in <see cref="Origins"/>.
+/// </summary>
+public sealed class GuardPasskeyOptions
+{
+    /// <summary>The relying party's id, a domain (example.com). Null: the host of <see cref="GuardOptions.PublicUrl"/>.</summary>
+    public string? RpId { get; set; }
+
+    /// <summary>
+    /// The origins a passkey's ceremony may come from (https://example.com), each also given comma-separated. Empty: the
+    /// origin of <see cref="GuardOptions.PublicUrl"/>.
+    /// </summary>
+    public List<string> Origins { get; set; } = [];
+
+    /// <summary>The site's name the device shows. Null: the product's English name (Texts.ProductName).</summary>
+    public string? RpName { get; set; }
 }
 
 /// <summary>

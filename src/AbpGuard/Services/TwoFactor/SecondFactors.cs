@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -16,9 +17,9 @@ namespace AbpGuard.Services.TwoFactor;
 
 /// <summary>A password that was right but isn't enough: the ticket for the second step, and what it may be.</summary>
 /// <param name="Ticket">Good once, for five minutes and five tries.</param>
-/// <param name="Methods">The person's methods that the step takes (<c>app</c>); empty when <paramref name="Enrol"/>.</param>
+/// <param name="Methods">The person's methods that the step takes (<c>passkey</c>, <c>app</c>, sent codes); empty when <paramref name="Enrol"/>.</param>
 /// <param name="Enrol">The person has none yet and must set one up with the ticket first.</param>
-/// <param name="Strong">Only a strong method will do (the app), as one of their groups asks.</param>
+/// <param name="Strong">Only a strong method will do (a passkey or the app), as one of their groups asks.</param>
 /// <param name="Senders">The methods among them whose code is sent, with where it would go (masked).</param>
 public sealed record SecondFactorChallengeDto(string Ticket, List<string> Methods, bool Enrol, bool Strong, DateTime ExpiresAt, List<SecondFactorSenderDto>? Senders = null);
 
@@ -41,14 +42,73 @@ public sealed record AppEnrolmentDto(string Secret, string Address, string Qr);
 /// <summary>A second factor set up; the recovery codes when they were made now, shown this once.</summary>
 public sealed record SecondFactorEnrolledDto(List<string>? RecoveryCodes);
 
-public sealed record SecondFactorDto(Guid Id, string Kind, DateTime CreatedAt, DateTime? LastUsedAt);
+/// <summary>
+/// One of a person's second factors: the authenticator <c>app</c> or a <c>passkey</c>, and whether it's strong (both are).
+/// A passkey has its <see cref="Name"/>, whether it's synced to the person's other devices (<see cref="BackedUp"/>), and its
+/// <see cref="Provider"/> when Guard knows its authenticator.
+/// </summary>
+public sealed record SecondFactorDto(Guid Id, string Kind, DateTime CreatedAt, DateTime? LastUsedAt)
+{
+    public string? Name { get; init; }
 
-/// <summary>A person's second factors: what their groups ask (<see cref="TwoFactorModes"/>), what they have, the recovery codes left.</summary>
+    public bool? BackedUp { get; init; }
+
+    public string? Provider { get; init; }
+
+    public bool Strong { get; init; }
+
+    public static SecondFactorDto Of(Passkey passkey) => new(passkey.Id, SecondFactorKinds.Passkey, passkey.CreatedAt, passkey.LastUsedAt)
+    {
+        Name = passkey.Name,
+        BackedUp = passkey.BackedUp,
+        Provider = PasskeyProviders.Name(passkey.AaGuid),
+        Strong = true,
+    };
+}
+
+/// <summary>
+/// A person's second factors: what their groups ask (<see cref="TwoFactorModes"/>), what they have (passkeys and the app),
+/// the recovery codes left (never strong), and whether they have a strong factor. <see cref="RequiredBy"/> is when the site
+/// admins' rule asks them to have one by, and <see cref="Overdue"/> whether that's past.
+/// </summary>
 public sealed record MySecondFactorsDto(string Mode, bool Asked, List<SecondFactorDto> Factors, int RecoveryCodesLeft, bool Disabled,
-    List<SecondFactorSenderDto>? Senders = null);
+    List<SecondFactorSenderDto>? Senders = null)
+{
+    public bool Strong { get; init; }
 
-/// <summary>A ticket's second step passed: who, for which client and scopes.</summary>
-public sealed record SecondStepPassed(Guid AccountId, string Client, string? Scopes);
+    public DateTime? RequiredBy { get; init; }
+
+    public bool Overdue { get; init; }
+}
+
+/// <summary>A passkey added: the factor, and the recovery codes when it was the person's first factor (shown this once).</summary>
+public sealed record PasskeyAddedDto(Guid Id, string Kind, DateTime CreatedAt, DateTime? LastUsedAt, string? Name, bool? BackedUp, string? Provider, bool Strong,
+    List<string>? RecoveryCodes)
+{
+    public static PasskeyAddedDto Of(SecondFactorDto factor, List<string>? codes) =>
+        new(factor.Id, factor.Kind, factor.CreatedAt, factor.LastUsedAt, factor.Name, factor.BackedUp, factor.Provider, factor.Strong, codes);
+}
+
+/// <summary>Adding a passkey: added, or why not (<c>passkey_exists</c>, <c>passkey_rejected</c>, <c>ticket_expired</c>).</summary>
+public sealed record PasskeyAddResult(PasskeyAddedDto? Added, string? Error);
+
+/// <summary>A ticket's second step passed: who, for which client and scopes, and by which method (null: a factor was just set up with the ticket).</summary>
+public sealed record SecondStepPassed(Guid AccountId, string Client, string? Scopes)
+{
+    public string? Method { get; init; }
+
+    /// <summary>Whether the step was strong: a passkey, or the app's code.</summary>
+    public bool Strong => SecondFactorKinds.IsStrong(Method);
+
+    /// <summary>Whether it was a recovery code, which counts as strong for setting up a new factor alone.</summary>
+    public bool Recovery => Method == SecondFactorKinds.Recovery;
+}
+
+/// <summary>A step-up's second factor after the right password: null error when it passes, and whether it was strong (the app's code).</summary>
+public sealed record StepUpProof(string? Error, bool Strong);
+
+/// <summary>Options for a passkey ceremony (the browser's JSON), or why not (<c>ticket_expired</c>, <c>no_passkey</c>).</summary>
+public sealed record PasskeyOptionsResult(string? Options, string? Error);
 
 /// <summary>
 /// The second step's outcome: passed, or why not (<c>ticket_expired</c>: used, too old or out of tries, or another
@@ -58,10 +118,11 @@ public sealed record SecondStepResult(SecondStepPassed? Passed, string? Error);
 
 /// <summary>
 /// A second factor: which people are asked (the strictest mode of their groups, or having set one up), the
-/// tickets of the second step, the authenticator app and recovery codes, setting up, removing and an admin's reset. The
-/// app's secret is encrypted with the site's key ring; tickets and recovery codes are kept as their SHA-256. Wrong codes
-/// count for the whole site (<see cref="IGuardRateLimits"/>), ten in 15 minutes per person, and five per ticket.
-/// <c>Guard:TwoFactor:Disabled</c> asks no one: the emergency switch, for a site whose admins all lost their phones.
+/// tickets of the second step, passkeys, the authenticator app and recovery codes, setting up, removing and an admin's
+/// reset. The app's secret is encrypted with the site's key ring; tickets and recovery codes are kept as their SHA-256.
+/// Wrong codes (and passkeys' refused answers) count for the whole site (<see cref="IGuardRateLimits"/>), ten in 15
+/// minutes per person, and five per ticket. <c>Guard:TwoFactor:Disabled</c> asks no one: the emergency switch, for a site
+/// whose admins all lost their phones.
 /// </summary>
 public sealed class SecondFactors(
     GuardDb guardDb,
@@ -73,7 +134,8 @@ public sealed class SecondFactors(
     IOptions<GuardOptions> options,
     IGuardMessenger messenger,
     ILogger<SecondFactors> logger,
-    IOptions<GuardNames> names) : ITransientDependency
+    IOptions<GuardNames> names,
+    Passkeys passkeys) : ITransientDependency
 {
     public const int RecoveryCodeCount = 10;
     private const int MaxWrongCodes = 10;
@@ -110,17 +172,17 @@ public sealed class SecondFactors(
         {
             Account account = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == accountId, cancellationToken);
             string mode = await ModeAsync(db, account, cancellationToken);
-            List<string> kinds = await db.SecondFactors.AsNoTracking().Where(f => f.AccountId == accountId && f.ConfirmedAt != null).Select(f => f.Kind)
-                .Distinct().ToListAsync(cancellationToken);
+            List<string> kinds = await KindsAsync(db, accountId, cancellationToken);
             if (Disabled || (!TwoFactorModes.Asks(mode) && kinds.Count == 0))
             {
                 return null;
             }
 
-            // The app first; then the codes the site sends, by what reaches the person, unless a strong group asks for the app.
+            // A passkey first, then the app; then the codes the site sends, by what reaches the person, unless a strong group
+            // asks for a strong one.
             bool strong = mode == TwoFactorModes.Strong;
             List<SecondFactorSenderDto> senders = strong ? [] : await SendersAsync(db, account, cancellationToken);
-            List<string> methods = [.. kinds.Where(k => !strong || SecondFactorKinds.IsStrong(k)).Order(StringComparer.Ordinal), .. senders.Select(s => s.Method)];
+            List<string> methods = [.. kinds.Where(k => !strong || SecondFactorKinds.IsStrong(k)), .. senders.Select(s => s.Method)];
             // Recovery codes stand in for a factor; listed only where the host's clients read them (GuardOptions.TwoFactor).
             if (options.Value.TwoFactor.ListsRecovery && methods.Count > 0
                 && await db.RecoveryCodes.AnyAsync(c => c.AccountId == accountId && c.UsedAt == null, cancellationToken))
@@ -138,11 +200,13 @@ public sealed class SecondFactors(
         }, requiresNew: true, cancellationToken);
 
     /// <summary>
-    /// The second step: the ticket and a code of the method (the app, or a recovery code), or a ticket a second factor was
-    /// just set up with. Passed, the ticket is used up. Wrong, it's a try less; refused outright when the client isn't the
-    /// one that checked the password, or the person has had too many wrong codes.
+    /// The second step: the ticket and a code of the method (the app, a sent code or a recovery code), or a passkey's
+    /// answer (<paramref name="credential"/>, to options from <see cref="SecondStepOptionsAsync"/>), or a ticket a second
+    /// factor was just set up with. Passed, the ticket is used up. Wrong, it's a try less; refused outright when the client
+    /// isn't the one that checked the password, or the person has had too many wrong codes.
     /// </summary>
-    public async Task<SecondStepResult> PassAsync(string ticket, string? method, string? code, string client, string? ip, CancellationToken cancellationToken)
+    public async Task<SecondStepResult> PassAsync(string ticket, string? method, string? code, string client, string? ip, CancellationToken cancellationToken,
+        JsonElement? credential = null)
     {
         string hash = Hash(ticket);
         (SecondStepPassed? passed, Guid? accountId, string? username, string? why) = await guardDb.RunAsync<(SecondStepPassed?, Guid?, string?, string?)>(async db =>
@@ -178,7 +242,7 @@ public sealed class SecondFactors(
                 }
 
                 bool strong = await ModeAsync(db, account, cancellationToken) == TwoFactorModes.Strong;
-                if (!await CheckCodeAsync(db, account.Id, method, code, strong, now, cancellationToken))
+                if (!await CheckCodeAsync(db, account.Id, method, code, strong, now, cancellationToken, Passkeys.TicketBinding(hash), credential))
                 {
                     return (null, account.Id, account.Username, "code");
                 }
@@ -192,7 +256,7 @@ public sealed class SecondFactors(
                 return (null, account.Id, account.Username, "ticket");
             }
 
-            return (new SecondStepPassed(account.Id, row.Client, row.Scopes), account.Id, account.Username, null);
+            return (new SecondStepPassed(account.Id, row.Client, row.Scopes) { Method = row.ProvedAt is null ? method : null }, account.Id, account.Username, null);
         }, requiresNew: true, cancellationToken);
 
         await audit.WriteAsync(passed is null ? SecurityAuditTypes.SecondFactorFailed : SecurityAuditTypes.SecondFactorSucceeded, username, accountId,
@@ -210,44 +274,52 @@ public sealed class SecondFactors(
     /// right), else <c>second_factor_required</c> (no code), <c>second_factor_failed</c> or <c>too_many_attempts</c>.
     /// Wrong codes count with the sign-in's, so a session and a password can't be used to guess them.
     /// </summary>
-    public async Task<string?> StepUpErrorAsync(Guid accountId, string? method, string? code, string? ip, CancellationToken cancellationToken)
+    public async Task<string?> StepUpErrorAsync(Guid accountId, string? method, string? code, string? ip, CancellationToken cancellationToken) =>
+        (await StepUpAsync(accountId, method, code, ip, cancellationToken)).Error;
+
+    /// <summary>
+    /// A step-up's second factor, after the right password, as <see cref="StepUpErrorAsync"/> says, and whether it was
+    /// strong: the authenticator app's code (the password and the app make a strong step-up; a sent or recovery code doesn't).
+    /// A passkey steps up on its own (<see cref="StepUpWithPasskeyAsync"/>), not with the password.
+    /// </summary>
+    public async Task<StepUpProof> StepUpAsync(Guid accountId, string? method, string? code, string? ip, CancellationToken cancellationToken)
     {
-        (string? error, string? username) = await guardDb.RunAsync<(string?, string?)>(async db =>
+        (string? error, bool strongProof, string? username) = await guardDb.RunAsync<(string?, bool, string?)>(async db =>
         {
             if (Disabled)
             {
-                return (null, null);
+                return (null, false, null);
             }
 
-            // Asked as at sign-in: someone with the app; or someone a group asks, by a code the site sends them. One with
-            // no way to give a code yet passes, or they could never step up to set the app up.
+            // Asked as at sign-in: someone with a factor; or someone a group asks, by a code the site sends them. One with
+            // no way to give a code yet passes, or they could never step up to set one up.
             Account account = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == accountId, cancellationToken);
-            if (!await db.SecondFactors.AnyAsync(f => f.AccountId == accountId && f.ConfirmedAt != null, cancellationToken)
+            if (!await HasFactorAsync(db, accountId, cancellationToken)
                 && (await ModeAsync(db, account, cancellationToken) is var mode && (!TwoFactorModes.Asks(mode) || mode == TwoFactorModes.Strong)
                     || (await SendersAsync(db, account, cancellationToken)).Count == 0))
             {
-                return (null, null);
+                return (null, false, null);
             }
 
             if (code is not { Length: > 0 })
             {
-                return ("second_factor_required", account.Username);
+                return ("second_factor_required", false, account.Username);
             }
 
             // Taken before the check, as at sign-in; a right code gives it back.
             if (!await limits.TryTakeAsync(WrongKey(accountId), MaxWrongCodes, WrongCodesWindow, cancellationToken))
             {
-                return ("too_many_attempts", account.Username);
+                return ("too_many_attempts", false, account.Username);
             }
 
             bool strong = await ModeAsync(db, account, cancellationToken) == TwoFactorModes.Strong;
-            if (await CheckCodeAsync(db, accountId, method, code, strong, DateTime.UtcNow, cancellationToken))
+            if (method != SecondFactorKinds.Passkey && await CheckCodeAsync(db, accountId, method, code, strong, DateTime.UtcNow, cancellationToken))
             {
                 await limits.ResetAsync(WrongKey(accountId), cancellationToken);
-                return (null, account.Username);
+                return (null, method == SecondFactorKinds.App, account.Username);
             }
 
-            return ("second_factor_failed", account.Username);
+            return ("second_factor_failed", false, account.Username);
         }, requiresNew: true, cancellationToken);
 
         if (error is "second_factor_failed" or "too_many_attempts")
@@ -255,13 +327,92 @@ public sealed class SecondFactors(
             await audit.WriteAsync(SecurityAuditTypes.SecondFactorFailed, username, accountId, "step-up", ip, cancellationToken);
         }
 
+        return new StepUpProof(error, error is null && strongProof);
+    }
+
+    /// <summary>
+    /// A step-up with a passkey alone (it proves the device and, by its user verification, the person): the answer to
+    /// options from <see cref="StepUpOptionsAsync"/> for the same session. Null when it passes, else <c>passkey_rejected</c>
+    /// or <c>too_many_attempts</c>; refused answers count with wrong codes.
+    /// </summary>
+    public async Task<string?> StepUpWithPasskeyAsync(Guid accountId, string binding, JsonElement? credential, string? ip, CancellationToken cancellationToken)
+    {
+        (string? error, string? username, string? why) = await guardDb.RunAsync<(string?, string?, string?)>(async db =>
+        {
+            Account account = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == accountId, cancellationToken);
+            if (!await limits.TryTakeAsync(WrongKey(accountId), MaxWrongCodes, WrongCodesWindow, cancellationToken))
+            {
+                return ("too_many_attempts", account.Username, "too many");
+            }
+
+            PasskeyCheck check = await passkeys.VerifyAsync(db, accountId, Passkeys.StepUp, binding, credential, cancellationToken);
+            if (check.Passkey is null)
+            {
+                return (Passkeys.Rejected, account.Username, check.Why);
+            }
+
+            await limits.ResetAsync(WrongKey(accountId), cancellationToken);
+            return (null, account.Username, null);
+        }, requiresNew: true, cancellationToken);
+
+        await audit.WriteAsync(error is null ? SecurityAuditTypes.StepUpSucceeded : SecurityAuditTypes.SecondFactorFailed, username, accountId,
+            error is null ? SecondFactorKinds.Passkey : $"step-up: passkey ({why})", ip, cancellationToken);
         return error;
+    }
+
+    /// <summary>The options for a step-up with one of the person's passkeys, for the session that asks; null when they have none.</summary>
+    public Task<string?> StepUpOptionsAsync(Guid accountId, string binding, CancellationToken cancellationToken) =>
+        passkeys.RequestOptionsAsync(accountId, Passkeys.StepUp, binding, cancellationToken);
+
+    /// <summary>
+    /// The options for a sign-in's second step with a passkey: the ticket's (usable: not used, too old or out of tries),
+    /// for the person's passkeys; <c>ticket_expired</c>, or <c>no_passkey</c> when they have none.
+    /// </summary>
+    public async Task<PasskeyOptionsResult> SecondStepOptionsAsync(string ticket, CancellationToken cancellationToken)
+    {
+        string hash = Hash(ticket);
+        DateTime now = DateTime.UtcNow;
+        Guid? accountId = await guardDb.RunAsync(async db => await db.SignInTickets.AsNoTracking().Where(t => t.TicketHash == hash)
+            .Select(t => new { t.AccountId, t.ExpiresAt, t.Attempts, t.ProvedAt }).FirstOrDefaultAsync(cancellationToken) is { } row
+            && row.ExpiresAt > now && row.Attempts < SignInTicket.MaxAttempts && row.ProvedAt is null
+                ? row.AccountId
+                : (Guid?)null, cancellationToken: cancellationToken);
+        if (accountId is not { } id || Disabled)
+        {
+            return new PasskeyOptionsResult(null, "ticket_expired");
+        }
+
+        return await passkeys.RequestOptionsAsync(id, Passkeys.SecondStep, Passkeys.TicketBinding(hash), cancellationToken) is { } json
+            ? new PasskeyOptionsResult(json, null)
+            : new PasskeyOptionsResult(null, "no_passkey");
     }
 
     /// <summary>Whether the person has a second factor set up (a step-up then asks for a code too).</summary>
     public Task<bool> HasAsync(Guid accountId, CancellationToken cancellationToken) =>
-        Disabled ? Task.FromResult(false) : guardDb.RunAsync(db => db.SecondFactors.AnyAsync(f => f.AccountId == accountId && f.ConfirmedAt != null, cancellationToken),
-            cancellationToken: cancellationToken);
+        Disabled ? Task.FromResult(false) : guardDb.RunAsync(db => HasFactorAsync(db, accountId, cancellationToken), cancellationToken: cancellationToken);
+
+    /// <summary>Whether the person has a strong factor: a passkey or the authenticator app (every factor set up is one).</summary>
+    public Task<bool> HasStrongAsync(Guid accountId, CancellationToken cancellationToken) =>
+        guardDb.RunAsync(db => HasFactorAsync(db, accountId, cancellationToken), cancellationToken: cancellationToken);
+
+    /// <summary>A factor set up: the app confirmed, or a passkey. Both are strong; recovery codes and sent codes aren't factors.</summary>
+    internal static async Task<bool> HasFactorAsync(GuardDbContext db, Guid accountId, CancellationToken cancellationToken) =>
+        await db.SecondFactors.AnyAsync(f => f.AccountId == accountId && f.ConfirmedAt != null, cancellationToken)
+        || await db.Passkeys.AnyAsync(p => p.AccountId == accountId, cancellationToken);
+
+    /// <summary>The kinds the person has set up, a passkey first: <c>passkey</c>, <c>app</c>.</summary>
+    internal static async Task<List<string>> KindsAsync(GuardDbContext db, Guid accountId, CancellationToken cancellationToken)
+    {
+        List<string> kinds = [];
+        if (await db.Passkeys.AnyAsync(p => p.AccountId == accountId, cancellationToken))
+        {
+            kinds.Add(SecondFactorKinds.Passkey);
+        }
+
+        kinds.AddRange((await db.SecondFactors.AsNoTracking().Where(f => f.AccountId == accountId && f.ConfirmedAt != null).Select(f => f.Kind).Distinct()
+            .ToListAsync(cancellationToken)).Order(StringComparer.Ordinal));
+        return kinds;
+    }
 
     /// <summary>Starts setting up the authenticator app: a new secret, kept until its first code is right.</summary>
     public Task<AppEnrolmentDto> StartAppAsync(Guid accountId, CancellationToken cancellationToken) =>
@@ -309,6 +460,84 @@ public sealed class SecondFactors(
         return done;
     }
 
+    /// <summary>The options for a new passkey of someone signed in (the browser's creation options), for the session or sign-in that asks.</summary>
+    public Task<string> PasskeyOptionsAsync(Guid accountId, string binding, CancellationToken cancellationToken) =>
+        passkeys.CreationOptionsAsync(accountId, Passkeys.Register, binding, cancellationToken);
+
+    /// <summary>
+    /// Adds a passkey with the device's answer to <see cref="PasskeyOptionsAsync"/> (or, with a ticket, to
+    /// <see cref="EnrolPasskeyOptionsAsync"/>). The first second factor comes with ten recovery codes, shown once.
+    /// </summary>
+    public async Task<PasskeyAddResult> AddPasskeyAsync(Guid accountId, string binding, string? name, JsonElement? credential, CancellationToken cancellationToken,
+        string purpose = Passkeys.Register)
+    {
+        try
+        {
+            return await guardDb.RunAsync(async db =>
+            {
+                PasskeyRegistration made = await passkeys.RegisterAsync(db, accountId, purpose, binding, name, credential, cancellationToken);
+                if (made.Passkey is not { } passkey)
+                {
+                    return new PasskeyAddResult(null, made.Error);
+                }
+
+                List<string>? codes = await db.RecoveryCodes.AnyAsync(c => c.AccountId == accountId && c.UsedAt == null, cancellationToken)
+                    ? null
+                    : await NewRecoveryCodesAsync(db, accountId, cancellationToken);
+                audit.Add(db, SecurityAuditTypes.SecondFactorAdded, new AuditTarget("Account", accountId, null),
+                    new { kind = SecondFactorKinds.Passkey, name = passkey.Name, provider = PasskeyProviders.Name(passkey.AaGuid) });
+                await db.SaveChangesAsync(cancellationToken);
+                return new PasskeyAddResult(PasskeyAddedDto.Of(SecondFactorDto.Of(passkey), codes), null);
+            }, requiresNew: true, cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            // The same device's passkey added twice at once: the unique credential id keeps one.
+            return new PasskeyAddResult(null, Passkeys.Exists);
+        }
+    }
+
+    /// <summary>Renames one of the person's passkeys: 1 to 100 characters.</summary>
+    public Task<SecondFactorDto> RenamePasskeyAsync(Guid accountId, Guid passkeyId, string? name, CancellationToken cancellationToken)
+    {
+        string given = (name ?? "").Trim();
+        if (given.Length is 0 or > Passkey.NameLength)
+        {
+            throw new UserFriendlyException($"Give the passkey a name of 1 to {Passkey.NameLength} characters.");
+        }
+
+        return guardDb.RunAsync(async db =>
+        {
+            Passkey passkey = await db.Passkeys.FirstOrDefaultAsync(p => p.Id == passkeyId && p.AccountId == accountId, cancellationToken)
+                ?? throw new Volo.Abp.Domain.Entities.EntityNotFoundException(typeof(Passkey), passkeyId);
+            passkey.Name = given;
+            await db.SaveChangesAsync(cancellationToken);
+            return SecondFactorDto.Of(passkey);
+        }, requiresNew: true, cancellationToken);
+    }
+
+    /// <summary>The options for setting up a passkey at sign-in, with a ticket that may set one up (<see cref="TicketAccountAsync"/>); null when it can't.</summary>
+    public async Task<string?> EnrolPasskeyOptionsAsync(string ticket, CancellationToken cancellationToken) =>
+        await TicketAccountAsync(ticket, cancellationToken) is { } accountId
+            ? await passkeys.CreationOptionsAsync(accountId, Passkeys.Enrol, Passkeys.TicketBinding(Hash(ticket)), cancellationToken)
+            : null;
+
+    /// <summary>
+    /// Sets up a passkey at sign-in with the ticket and the device's answer: the ticket then passes the second step with
+    /// no code. A refused answer is a try less; <c>ticket_expired</c> when the ticket can't set one up.
+    /// </summary>
+    public async Task<PasskeyAddResult> EnrolPasskeyAsync(string ticket, string? name, JsonElement? credential, CancellationToken cancellationToken)
+    {
+        if (await TicketAccountAsync(ticket, cancellationToken) is not { } accountId)
+        {
+            return new PasskeyAddResult(null, "ticket_expired");
+        }
+
+        PasskeyAddResult added = await AddPasskeyAsync(accountId, Passkeys.TicketBinding(Hash(ticket)), name, credential, cancellationToken, Passkeys.Enrol);
+        await (added.Added is null ? SpendTicketTryAsync(ticket, cancellationToken) : ProveTicketAsync(ticket, cancellationToken));
+        return added;
+    }
+
     /// <summary>
     /// The account a ticket may set up a second factor for; null when it can't: used, expired, out of tries, or the step
     /// has a method already (the ticket would otherwise pass the step without it). That is the challenge's own rule: only
@@ -324,7 +553,7 @@ public sealed class SecondFactors(
             var row = await db.SignInTickets.AsNoTracking().Where(t => t.TicketHash == hash).Select(t => new { t.AccountId, t.ExpiresAt, t.Attempts, t.ProvedAt })
                 .FirstOrDefaultAsync(cancellationToken);
             if (row is null || row.ExpiresAt <= now || row.Attempts >= SignInTicket.MaxAttempts || row.ProvedAt is not null
-                || await db.SecondFactors.AnyAsync(f => f.AccountId == row.AccountId && f.ConfirmedAt != null, cancellationToken))
+                || await HasFactorAsync(db, row.AccountId, cancellationToken))
             {
                 return null;
             }
@@ -361,11 +590,15 @@ public sealed class SecondFactors(
         {
             Account account = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == accountId, cancellationToken);
             string mode = await ModeAsync(db, account, cancellationToken);
-            List<SecondFactorDto> factors = await db.SecondFactors.AsNoTracking().Where(f => f.AccountId == accountId && f.ConfirmedAt != null)
-                .OrderBy(f => f.CreatedAt).Select(f => new SecondFactorDto(f.Id, f.Kind, f.CreatedAt, f.LastUsedAt)).ToListAsync(cancellationToken);
+            List<SecondFactorDto> apps = (await db.SecondFactors.AsNoTracking().Where(f => f.AccountId == accountId && f.ConfirmedAt != null)
+                .ToListAsync(cancellationToken)).Select(f => new SecondFactorDto(f.Id, f.Kind, f.CreatedAt, f.LastUsedAt) { Strong = SecondFactorKinds.IsStrong(f.Kind) }).ToList();
+            List<SecondFactorDto> factors = [.. apps.Concat((await Passkeys.OfAsync(db, accountId, cancellationToken)).Select(SecondFactorDto.Of)).OrderBy(f => f.CreatedAt)];
             int left = await db.RecoveryCodes.CountAsync(c => c.AccountId == accountId && c.UsedAt == null, cancellationToken);
             List<SecondFactorSenderDto> senders = Disabled || mode == TwoFactorModes.Strong ? [] : await SendersAsync(db, account, cancellationToken);
-            return new MySecondFactorsDto(mode, !Disabled && (TwoFactorModes.Asks(mode) || factors.Count > 0), factors, left, Disabled, senders);
+            return new MySecondFactorsDto(mode, !Disabled && (TwoFactorModes.Asks(mode) || factors.Count > 0), factors, left, Disabled, senders)
+            {
+                Strong = factors.Any(f => f.Strong),
+            };
         }, cancellationToken: cancellationToken);
 
     /// <summary>
@@ -488,26 +721,65 @@ public sealed class SecondFactors(
         return digits.Length <= 4 ? "••••" : $"•••• {digits[^4..]}";
     }
 
-    /// <summary>Removes one of the person's second factors; not the last one while a group of theirs requires one.</summary>
+    /// <summary>The error code a removal of the last strong factor is refused with: a group's rule, or the site admins', still asks for one.</summary>
+    public const string LastStrongFactor = "last_strong_factor";
+
+    /// <summary>
+    /// Whether the factor (the app, or a passkey) is the person's last strong one: removing it then asks for a strong
+    /// step-up, and is refused while a group's rule asks for one. Null when they have no such factor.
+    /// </summary>
+    public Task<bool?> IsLastStrongAsync(Guid accountId, Guid factorId, CancellationToken cancellationToken) =>
+        guardDb.RunAsync<bool?>(async db =>
+        {
+            bool app = await db.SecondFactors.AnyAsync(f => f.Id == factorId && f.AccountId == accountId, cancellationToken);
+            bool passkey = !app && await db.Passkeys.AnyAsync(p => p.Id == factorId && p.AccountId == accountId, cancellationToken);
+            if (!app && !passkey)
+            {
+                return null;
+            }
+
+            return !await db.SecondFactors.AnyAsync(f => f.AccountId == accountId && f.Id != factorId && f.ConfirmedAt != null, cancellationToken)
+                && !await db.Passkeys.AnyAsync(p => p.AccountId == accountId && p.Id != factorId, cancellationToken);
+        }, cancellationToken: cancellationToken);
+
+    /// <summary>
+    /// Removes one of the person's second factors (the app, or a passkey); not the last one while a group of theirs requires
+    /// one (<c>last_strong_factor</c>). Recovery codes go with the last.
+    /// </summary>
     public Task RemoveAsync(Guid accountId, Guid factorId, CancellationToken cancellationToken) =>
         guardDb.RunAsync(async db =>
         {
-            SecondFactor factor = await db.SecondFactors.FirstOrDefaultAsync(f => f.Id == factorId && f.AccountId == accountId, cancellationToken)
-                ?? throw new Volo.Abp.Domain.Entities.EntityNotFoundException(typeof(SecondFactor), factorId);
-            Account account = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == accountId, cancellationToken);
-            bool last = !await db.SecondFactors.AnyAsync(f => f.AccountId == accountId && f.Id != factorId && f.ConfirmedAt != null, cancellationToken);
-            if (last && TwoFactorModes.Asks(await ModeAsync(db, account, cancellationToken)))
+            SecondFactor? factor = await db.SecondFactors.FirstOrDefaultAsync(f => f.Id == factorId && f.AccountId == accountId, cancellationToken);
+            Passkey? passkey = factor is null ? await db.Passkeys.FirstOrDefaultAsync(p => p.Id == factorId && p.AccountId == accountId, cancellationToken) : null;
+            if (factor is null && passkey is null)
             {
-                throw new UserFriendlyException("A group you're in requires a second factor: set up another one before removing this.");
+                throw new Volo.Abp.Domain.Entities.EntityNotFoundException(typeof(SecondFactor), factorId);
             }
 
-            db.SecondFactors.Remove(factor);
+            Account account = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == accountId, cancellationToken);
+            bool last = !await db.SecondFactors.AnyAsync(f => f.AccountId == accountId && f.Id != factorId && f.ConfirmedAt != null, cancellationToken)
+                && !await db.Passkeys.AnyAsync(p => p.AccountId == accountId && p.Id != factorId, cancellationToken);
+            if (last && TwoFactorModes.Asks(await ModeAsync(db, account, cancellationToken)))
+            {
+                throw new UserFriendlyException("A group you're in requires a second factor: set up another one before removing this.", LastStrongFactor);
+            }
+
+            if (factor is not null)
+            {
+                db.SecondFactors.Remove(factor);
+            }
+            else
+            {
+                db.Passkeys.Remove(passkey!);
+            }
+
             if (last)
             {
                 await db.RecoveryCodes.Where(c => c.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
             }
 
-            audit.Add(db, SecurityAuditTypes.SecondFactorRemoved, new AuditTarget("Account", accountId, account.Username), new { kind = factor.Kind });
+            audit.Add(db, SecurityAuditTypes.SecondFactorRemoved, new AuditTarget("Account", accountId, account.Username),
+                passkey is null ? new { kind = factor!.Kind } : new { kind = SecondFactorKinds.Passkey, name = passkey.Name });
             await db.SaveChangesAsync(cancellationToken);
         }, requiresNew: true, cancellationToken);
 
@@ -515,7 +787,7 @@ public sealed class SecondFactors(
     public Task<List<string>> RenewRecoveryCodesAsync(Guid accountId, CancellationToken cancellationToken) =>
         guardDb.RunAsync(async db =>
         {
-            if (!await db.SecondFactors.AnyAsync(f => f.AccountId == accountId && f.ConfirmedAt != null, cancellationToken))
+            if (!await HasFactorAsync(db, accountId, cancellationToken))
             {
                 throw new UserFriendlyException("Set up a second factor first: recovery codes stand in for it.");
             }
@@ -532,16 +804,27 @@ public sealed class SecondFactors(
         {
             Account account = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == accountId, cancellationToken)
                 ?? throw new Volo.Abp.Domain.Entities.EntityNotFoundException(typeof(Account), accountId);
-            int removed = await db.SecondFactors.Where(f => f.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
+            int removed = await db.SecondFactors.Where(f => f.AccountId == accountId).ExecuteDeleteAsync(cancellationToken)
+                + await db.Passkeys.Where(p => p.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
+            await db.PasskeyChallenges.Where(c => c.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
             await db.RecoveryCodes.Where(c => c.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
             audit.Add(db, SecurityAuditTypes.SecondFactorReset, new AuditTarget("Account", accountId, account.Username), new { removed });
             await db.SaveChangesAsync(cancellationToken);
             logger.LogInformation("An admin reset the second factors of {Username}", account.Username);
         }, requiresNew: true, cancellationToken);
 
-    /// <summary>A code of the method: one of the person's app factors (each code once), or an unused recovery code (once).</summary>
-    private async Task<bool> CheckCodeAsync(GuardDbContext db, Guid accountId, string? method, string? code, bool strong, DateTime now, CancellationToken cancellationToken)
+    /// <summary>
+    /// A code of the method: one of the person's app factors (each code once), an unused recovery code (once), a sent code,
+    /// or for a sign-in's ticket (<paramref name="binding"/>) a passkey's answer to that ticket's options.
+    /// </summary>
+    private async Task<bool> CheckCodeAsync(GuardDbContext db, Guid accountId, string? method, string? code, bool strong, DateTime now, CancellationToken cancellationToken,
+        string? binding = null, JsonElement? credential = null)
     {
+        if (method == SecondFactorKinds.Passkey)
+        {
+            return binding is not null && (await passkeys.VerifyAsync(db, accountId, Passkeys.SecondStep, binding, credential, cancellationToken)).Passkey is not null;
+        }
+
         if (method == SecondFactorKinds.Recovery)
         {
             string hash = Hash(NormalizeRecovery(code));

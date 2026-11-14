@@ -4,8 +4,8 @@ namespace AbpGuard.Domain;
 
 /// <summary>
 /// A group's second-factor mode: <c>off</c>; <c>optional</c>, offered at sign-in and never asked;
-/// <c>required</c>; <c>strong</c>, required with a strong method (the authenticator app). A person follows the strictest
-/// of every group they're in.
+/// <c>required</c>; <c>strong</c>, required with a strong method (a passkey or the authenticator app). A person follows the
+/// strictest of every group they're in.
 /// </summary>
 public static class TwoFactorModes
 {
@@ -33,19 +33,119 @@ public static class TwoFactorModes
 /// <summary>
 /// The kinds of second factor. A recovery code isn't a factor of its own: it stands in for one, once. Codes
 /// sent by <c>email</c> or another channel (its key, <c>messaging:sms</c>) aren't set up: a site allows them, and anyone
-/// it can reach that way may use them.
+/// it can reach that way may use them. A <c>passkey</c> (WebAuthn) and the authenticator <c>app</c> are the strong ones.
 /// </summary>
 public static class SecondFactorKinds
 {
     public const string App = "app";
+    public const string Passkey = "passkey";
     public const string Recovery = "recovery";
     public const string Email = "email";
 
-    /// <summary>The methods a strong mode accepts.</summary>
-    public static bool IsStrong(string kind) => kind == App;
+    /// <summary>The methods a strong mode, and a strong step-up, accept: a passkey and the authenticator app.</summary>
+    public static bool IsStrong(string? kind) => kind is App or Passkey;
 
     /// <summary>A method whose code is sent: email, or a channel's key.</summary>
-    public static bool IsSent(string? method) => method is { Length: > 0 } && method is not (App or Recovery);
+    public static bool IsSent(string? method) => method is { Length: > 0 } && method is not (App or Passkey or Recovery);
+}
+
+/// <summary>
+/// A person's passkey (a WebAuthn credential), registered discoverable and with user verification: its credential id
+/// and public key (COSE), the signature count it last gave, its authenticator's AAGUID (which names the provider), the
+/// transports it said, whether it may be and is synced (its backup flags), the name the person gave it, and when it was
+/// made and last used. A passkey is personal data.
+/// </summary>
+public class Passkey : Entity<Guid>
+{
+    public const int NameLength = 100;
+
+    protected Passkey()
+    {
+    }
+
+    public Passkey(Guid id, Guid accountId, byte[] credentialId, byte[] publicKey, long signCount, Guid aaGuid, string? transports, bool backupEligible,
+        bool backedUp, string name) : base(id)
+    {
+        AccountId = accountId;
+        CredentialId = credentialId;
+        PublicKey = publicKey;
+        SignCount = signCount;
+        AaGuid = aaGuid;
+        Transports = transports;
+        BackupEligible = backupEligible;
+        BackedUp = backedUp;
+        Name = name;
+        CreatedAt = DateTime.UtcNow;
+    }
+
+    public Guid AccountId { get; private set; }
+
+    /// <summary>The credential's id, as the device gave it.</summary>
+    public byte[] CredentialId { get; private set; } = null!;
+
+    /// <summary>The credential's public key, COSE-encoded.</summary>
+    public byte[] PublicKey { get; private set; } = null!;
+
+    /// <summary>The signature count the device last gave: a later one must be higher, unless the device keeps none (0).</summary>
+    public long SignCount { get; set; }
+
+    /// <summary>The authenticator's model (all zeros when it doesn't say).</summary>
+    public Guid AaGuid { get; private set; }
+
+    /// <summary>How the device said it's reached (internal, hybrid, usb…), comma-separated.</summary>
+    public string? Transports { get; private set; }
+
+    /// <summary>Whether the passkey may be synced to the person's other devices.</summary>
+    public bool BackupEligible { get; private set; }
+
+    /// <summary>Whether it is synced now, as the device last said.</summary>
+    public bool BackedUp { get; set; }
+
+    public string Name { get; set; } = null!;
+    public DateTime CreatedAt { get; private set; }
+    public DateTime? LastUsedAt { get; set; }
+}
+
+/// <summary>
+/// A passkey ceremony's challenge, waiting for the device's answer: its SHA-256, the options sent (to check the answer
+/// against), and what asked for it. Good once, for five minutes, for the session or the sign-in's ticket that asked
+/// (<see cref="Binding"/>) and the purpose it was asked for.
+/// </summary>
+public class PasskeyChallenge : Entity<Guid>
+{
+    public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(5);
+
+    protected PasskeyChallenge()
+    {
+    }
+
+    public PasskeyChallenge(Guid id, Guid accountId, string challengeHash, string purpose, string binding, string options) : base(id)
+    {
+        AccountId = accountId;
+        ChallengeHash = challengeHash;
+        Purpose = purpose;
+        Binding = binding;
+        Options = options;
+        CreatedAt = DateTime.UtcNow;
+        ExpiresAt = CreatedAt + Lifetime;
+    }
+
+    public Guid AccountId { get; private set; }
+
+    /// <summary>SHA-256 of the challenge's bytes, in hex.</summary>
+    public string ChallengeHash { get; private set; } = null!;
+
+    /// <summary><c>register</c>, <c>step-up</c>, <c>second-step</c> or <c>enrol</c>.</summary>
+    public string Purpose { get; private set; } = null!;
+
+    /// <summary>What asked: <c>s:</c> and a web session's id, <c>a:</c> and an app's sign-in, or <c>t:</c> and a ticket's hash.</summary>
+    public string Binding { get; private set; } = null!;
+
+    /// <summary>The options sent, as JSON: the answer is checked against them.</summary>
+    public string Options { get; private set; } = null!;
+
+    public DateTime CreatedAt { get; private set; }
+    public DateTime ExpiresAt { get; private set; }
 }
 
 /// <summary>

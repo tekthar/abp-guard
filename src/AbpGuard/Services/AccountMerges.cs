@@ -452,8 +452,12 @@ public class AccountMergeService(GuardDb guardDb, IGuardExtensions extensions, I
         await db.AccountEmails.Where(e => e.AddedBy == source.Id).ExecuteUpdateAsync(s => s.SetProperty(e => e.AddedBy, survivor.Id), ct);
 
         // Its second factors and recovery codes go: they were set up for its sign-in, which has ended, and the
-        // survivor keeps its own. So do its sign-ins still waiting for their second step.
+        // survivor keeps its own. So do its sign-ins still waiting for their second step. Its passkeys go rather than
+        // move: each device's credential carries the merged account's user handle, so it couldn't sign in as the survivor;
+        // the person registers their device again.
         await db.SecondFactors.Where(f => f.AccountId == source.Id).ExecuteDeleteAsync(ct);
+        await db.Passkeys.Where(p => p.AccountId == source.Id).ExecuteDeleteAsync(ct);
+        await db.PasskeyChallenges.Where(c => c.AccountId == source.Id).ExecuteDeleteAsync(ct);
         await db.RecoveryCodes.Where(c => c.AccountId == source.Id).ExecuteDeleteAsync(ct);
         await db.SignInTickets.Where(t => t.AccountId == source.Id).ExecuteDeleteAsync(ct);
         await db.SentCodes.Where(c => c.AccountId == source.Id).ExecuteDeleteAsync(ct);

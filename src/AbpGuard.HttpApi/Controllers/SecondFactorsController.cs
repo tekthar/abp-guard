@@ -1,7 +1,9 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using AbpGuard.Services.TwoFactor;
 using AbpGuard.Acting;
+using OpenIddict.Abstractions;
 
 namespace AbpGuard.Controllers;
 
@@ -86,10 +88,97 @@ public class SecondFactorEnrolmentController(SecondFactors secondFactors) : Guar
         return Ok(enrolled);
     }
 
+    /// <summary>
+    /// Starts setting up a passkey at sign-in: the creation options (the browser's <c>PublicKeyCredentialCreationOptionsJSON</c>),
+    /// whose challenge is good once, for five minutes, for this ticket.
+    /// </summary>
+    [HttpPost("passkey/options")]
+    public async Task<IActionResult> PasskeyOptions([FromBody] SecondFactorTicketInput input, CancellationToken cancellationToken) =>
+        input.Ticket is { Length: > 0 } ticket && await secondFactors.EnrolPasskeyOptionsAsync(ticket, cancellationToken) is { } json
+            ? Content(json, "application/json")
+            : TicketRefused();
+
+    /// <summary>
+    /// Finishes setting up a passkey at sign-in with the device's answer: the passkey, the recovery codes (shown once), and
+    /// the ticket passes the second step. A refused answer is <c>passkey_rejected</c> (a try less), or <c>passkey_exists</c>.
+    /// </summary>
+    [HttpPost("passkey")]
+    [ProducesResponseType<PasskeyAddedDto>(200)]
+    public async Task<IActionResult> Passkey([FromBody] PasskeyEnrolInput input, CancellationToken cancellationToken)
+    {
+        if (input.Ticket is not { Length: > 0 } ticket)
+        {
+            return TicketRefused();
+        }
+
+        PasskeyAddResult added = await secondFactors.EnrolPasskeyAsync(ticket, input.Name, input.Credential, cancellationToken);
+        return added.Added is { } passkey ? Ok(passkey) : PasskeyError(added.Error);
+    }
+
+    /// <summary>The answers adding a passkey gives when it's refused.</summary>
+    public static ObjectResult PasskeyError(string? error) => error switch
+    {
+        "ticket_expired" => TicketRefused(),
+        Passkeys.Exists => SessionController.Error(400, Passkeys.Exists, "That device's passkey is registered already."),
+        _ => SessionController.PasskeyRejected(),
+    };
+
     private Task<Guid?> AccountAsync(string? ticket, CancellationToken cancellationToken) =>
         ticket is { Length: > 0 } ? secondFactors.TicketAccountAsync(ticket, cancellationToken) : Task.FromResult<Guid?>(null);
 
     private static ObjectResult TicketRefused() => SessionController.Error(401, "ticket_expired", "This sign-in has expired. Sign in again.");
+}
+
+/// <summary>A passkey set up at sign-in: the ticket, the name the person gives it, and the device's answer (its <c>toJSON()</c>).</summary>
+public sealed record PasskeyEnrolInput(string? Ticket, string? Name, JsonElement? Credential);
+
+/// <summary>A passkey added by someone signed in: its name and the device's answer.</summary>
+public sealed record PasskeyInput(string? Name, JsonElement? Credential);
+
+/// <summary>A passkey's new name.</summary>
+public sealed record PasskeyNameInput(string? Name);
+
+/// <summary>
+/// A person's own passkeys: the creation options, adding one with the device's answer, and renaming one. Removing one is
+/// the second factors' (<c>DELETE api/guard/me/second-factors/{id}</c>), and they're listed there beside the app.
+/// </summary>
+[Route("api/guard/me/passkeys")]
+[Authorize]
+[GuardFeature(nameof(GuardFeatures.TwoFactor))]
+public class MyPasskeysController(SecondFactors secondFactors) : GuardControllerBase
+{
+    /// <summary>The creation options (the browser's <c>PublicKeyCredentialCreationOptionsJSON</c>), for this session or sign-in.</summary>
+    [HttpPost("options")]
+    [StepUp]
+    public async Task<IActionResult> Options(CancellationToken cancellationToken) =>
+        Binding() is { } binding
+            ? Content(await secondFactors.PasskeyOptionsAsync(CurrentAccountId, binding, cancellationToken), "application/json")
+            : SessionController.Error(400, "not_a_session", "Only a browser's or the app's sign-in adds a passkey.");
+
+    /// <summary>Adds a passkey with the device's answer: the factor, and recovery codes (shown once) when it's the person's first.</summary>
+    [HttpPost]
+    [StepUp]
+    [ProducesResponseType<PasskeyAddedDto>(200)]
+    public async Task<IActionResult> Add([FromBody] PasskeyInput input, CancellationToken cancellationToken)
+    {
+        if (Binding() is not { } binding)
+        {
+            return SessionController.Error(400, "not_a_session", "Only a browser's or the app's sign-in adds a passkey.");
+        }
+
+        PasskeyAddResult added = await secondFactors.AddPasskeyAsync(CurrentAccountId, binding, input.Name, input.Credential, cancellationToken);
+        return added.Added is { } passkey ? Ok(passkey) : SecondFactorEnrolmentController.PasskeyError(added.Error);
+    }
+
+    [HttpPut("{id:guid}")]
+    public Task<SecondFactorDto> Rename(Guid id, [FromBody] PasskeyNameInput input, CancellationToken cancellationToken) =>
+        secondFactors.RenamePasskeyAsync(CurrentAccountId, id, input.Name, cancellationToken);
+
+    /// <summary>What a ceremony belongs to: the browser's session, else the app's sign-in; a personal access token has neither.</summary>
+    private string? Binding() =>
+        Guid.TryParse(User.FindFirst(Services.WebSessionHandler.SessionIdClaim)?.Value, out Guid session) ? Passkeys.SessionBinding(session)
+        : Acting.TokenId is null && User.GetAuthorizationId() is { Length: > 0 } authorization ? Passkeys.AppBinding(authorization)
+        : null;
 }
 
 /// <summary>

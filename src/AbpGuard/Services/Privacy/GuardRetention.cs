@@ -58,6 +58,8 @@ public sealed class GuardRetention(GuardDb guardDb, AccountProjector projector, 
         await db.AccountEmails.Where(e => accounts.Contains(e.AccountId)).ExecuteDeleteAsync(ct);
         await db.PersonalAccessTokens.Where(t => accounts.Contains(t.AccountId)).ExecuteDeleteAsync(ct);
         await db.SecondFactors.Where(f => accounts.Contains(f.AccountId)).ExecuteDeleteAsync(ct);
+        await db.Passkeys.Where(p => accounts.Contains(p.AccountId)).ExecuteDeleteAsync(ct);
+        await db.PasskeyChallenges.Where(c => accounts.Contains(c.AccountId)).ExecuteDeleteAsync(ct);
         await db.RecoveryCodes.Where(c => accounts.Contains(c.AccountId)).ExecuteDeleteAsync(ct);
         await db.SentCodes.Where(c => accounts.Contains(c.AccountId)).ExecuteDeleteAsync(ct);
         await db.SignInTickets.Where(t => accounts.Contains(t.AccountId)).ExecuteDeleteAsync(ct);

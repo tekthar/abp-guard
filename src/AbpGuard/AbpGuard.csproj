@@ -39,6 +39,8 @@
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <!-- The authenticator app's QR code. MIT. -->
     <PackageReference Include="QRCoder" Version="1.8.0" />
+    <!-- Passkeys: WebAuthn's ceremonies (Fido2NetLib). MIT. Its System.Formats.Cbor is ASP.NET Core's own (pruned on restore). -->
+    <PackageReference Include="Fido2" Version="4.3.2" />
   </ItemGroup>
 
 </Project>

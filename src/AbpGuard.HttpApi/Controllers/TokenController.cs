@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
@@ -93,7 +94,7 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
         {
             Services.TwoFactor.SecondStepResult step = await secondFactors.PassAsync(request.GetParameter("ticket")?.ToString() ?? "",
                 request.GetParameter("method")?.ToString(), request.GetParameter("code")?.ToString(), request.ClientId ?? "",
-                HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+                HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken, Credential(request.GetParameter("credential")?.ToString()));
             if (step.Passed is not { } passed)
             {
                 return Refuse(step.Error switch
@@ -111,7 +112,10 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
                 return Refuse("The account is no longer active.");
             }
 
-            return SignIn(CreatePrincipal(account, (passed.Scopes ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries), DateTimeOffset.UtcNow, secondFactor: true),
+            // A passkey or the app's code is a strong proof; a recovery code counts for adding a factor alone.
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            return SignIn(CreatePrincipal(account, (passed.Scopes ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries), now, secondFactor: true,
+                    strongAuthTime: passed.Strong ? now : null, recoveryAuthTime: passed.Recovery ? now : null),
                 OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
         }
 
@@ -152,6 +156,12 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
             DateTimeOffset? authTime = long.TryParse(refreshed!.GetClaim(Claims.AuthenticationTime), out long seconds)
                 ? DateTimeOffset.FromUnixTimeSeconds(seconds)
                 : null;
+            DateTimeOffset? strongAuthTime = long.TryParse(refreshed.GetClaim(AbpGuard.Acting.ActingContext.StrongAuthTimeClaim), out long strongSeconds)
+                ? DateTimeOffset.FromUnixTimeSeconds(strongSeconds)
+                : null;
+            DateTimeOffset? recoveryAuthTime = long.TryParse(refreshed.GetClaim(AbpGuard.Acting.ActingContext.RecoveryAuthTimeClaim), out long recoverySeconds)
+                ? DateTimeOffset.FromUnixTimeSeconds(recoverySeconds)
+                : null;
             if (request.GetParameter(StepUpParameter)?.ToString() is { } password)
             {
                 if (request.ClientId != options.Value.Clients.Web)
@@ -172,9 +182,10 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
                         stepUp.EndSession ? SessionEndedError : StepUpFailedError);
                 }
 
-                // A person with a second factor proves it again too: step_up_method and step_up_code.
-                if (await secondFactors.StepUpErrorAsync(account.Id, request.GetParameter(StepUpMethodParameter)?.ToString(),
-                        request.GetParameter(StepUpCodeParameter)?.ToString(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken) is { } error)
+                // A person with a second factor proves it again too: step_up_method and step_up_code. The app's code makes it strong.
+                Services.TwoFactor.StepUpProof proof = await secondFactors.StepUpAsync(account.Id, request.GetParameter(StepUpMethodParameter)?.ToString(),
+                    request.GetParameter(StepUpCodeParameter)?.ToString(), HttpContext.Connection.RemoteIpAddress?.ToString(), cancellationToken);
+                if (proof.Error is { } error)
                 {
                     return Refuse(error switch
                     {
@@ -185,11 +196,16 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
                 }
 
                 authTime = DateTimeOffset.UtcNow;
+                if (proof.Strong)
+                {
+                    strongAuthTime = authTime;
+                }
             }
 
-            // A session that had its second step keeps saying so.
+            // A session that had its second step keeps saying so, and when it last proved itself strongly.
             bool secondFactor = refreshed.GetClaims(Claims.AuthenticationMethodReference).Contains("mfa");
-            return SignIn(CreatePrincipal(account, refreshed.GetScopes(), authTime, secondFactor), OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+            return SignIn(CreatePrincipal(account, refreshed.GetScopes(), authTime, secondFactor, strongAuthTime, recoveryAuthTime),
+                OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
         }
 
         return Refuse("This grant type is not supported.", Errors.UnsupportedGrantType);
@@ -242,7 +258,27 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
     /// <summary>The second step's code was wrong; the ticket has tries left.</summary>
     public const string SecondFactorFailedError = "second_factor_failed";
 
-    private ClaimsPrincipal CreatePrincipal(Account account, IEnumerable<string> scopes, DateTimeOffset? authTime, bool secondFactor = false)
+    /// <summary>A passkey's answer given to the token endpoint (the <c>credential</c> parameter, its <c>toJSON()</c> as a string).</summary>
+    private static JsonElement? Credential(string? json)
+    {
+        if (json is not { Length: > 0 and < 65536 })
+        {
+            return null;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            return document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private ClaimsPrincipal CreatePrincipal(Account account, IEnumerable<string> scopes, DateTimeOffset? authTime, bool secondFactor = false,
+        DateTimeOffset? strongAuthTime = null, DateTimeOffset? recoveryAuthTime = null)
     {
         ClaimsIdentity identity = new(
             OpenIddictServerAspNetCoreDefaults.AuthenticationScheme,
@@ -258,6 +294,17 @@ public class TokenController(AuthService auth, GuardDb guardDb, IOpenIddictToken
             // second step ("otp", "mfa";).
             identity.SetClaim(Claims.AuthenticationTime, proved.ToUnixTimeSeconds())
                 .SetClaims(Claims.AuthenticationMethodReference, secondFactor ? ["pwd", "otp", "mfa"] : ["pwd"]);
+        }
+
+        // When the person last proved who they are strongly (a passkey, or the password and the app), and signed in with a recovery code.
+        if (strongAuthTime is { } strong)
+        {
+            identity.SetClaim(AbpGuard.Acting.ActingContext.StrongAuthTimeClaim, strong.ToUnixTimeSeconds());
+        }
+
+        if (recoveryAuthTime is { } recovery)
+        {
+            identity.SetClaim(AbpGuard.Acting.ActingContext.RecoveryAuthTimeClaim, recovery.ToUnixTimeSeconds());
         }
 
         identity.SetScopes(scopes.Intersect([Scopes.OfflineAccess, options.Value.ApiScope]));

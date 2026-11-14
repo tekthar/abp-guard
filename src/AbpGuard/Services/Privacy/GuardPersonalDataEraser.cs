@@ -258,6 +258,8 @@ public sealed class GuardPersonalDataEraser(GuardDb guardDb, AccountSessions ses
         await db.RoleGrants.Where(g => g.PrincipalType == PrincipalType.Account && accounts.Contains(g.PrincipalId)).ExecuteDeleteAsync(ct);
         await db.PersonalAccessTokens.Where(t => accounts.Contains(t.AccountId)).ExecuteDeleteAsync(ct);
         await db.SecondFactors.Where(f => accounts.Contains(f.AccountId)).ExecuteDeleteAsync(ct);
+        await db.Passkeys.Where(p => accounts.Contains(p.AccountId)).ExecuteDeleteAsync(ct);
+        await db.PasskeyChallenges.Where(c => accounts.Contains(c.AccountId)).ExecuteDeleteAsync(ct);
         await db.RecoveryCodes.Where(c => accounts.Contains(c.AccountId)).ExecuteDeleteAsync(ct);
         await db.SentCodes.Where(c => accounts.Contains(c.AccountId)).ExecuteDeleteAsync(ct);
         await db.SignInTickets.Where(t => accounts.Contains(t.AccountId)).ExecuteDeleteAsync(ct);

@@ -16,8 +16,15 @@ using Volo.Abp.DependencyInjection;
 
 namespace AbpGuard.Services;
 
-/// <summary>A live session as requests see it, with its account's names.</summary>
-public sealed record WebSessionInfo(Guid Id, Guid AccountId, string Username, string DisplayName, DateTime AuthTime, string TokenHash);
+/// <summary>
+/// A live session as requests see it, with its account's names, when the person last proved who they are, and when
+/// strongly (a passkey, or the password and the app) or with a recovery code.
+/// </summary>
+public sealed record WebSessionInfo(Guid Id, Guid AccountId, string Username, string DisplayName, DateTime AuthTime, string TokenHash,
+    DateTime? StrongAuthTime = null, DateTime? RecoveryAuthTime = null);
+
+/// <summary>A step-up's mark on a session: when the person proved who they are now, and when strongly (now too, for a strong one).</summary>
+public sealed record WebSessionStepUp(DateTime AuthTime, DateTime? StrongAuthTime);
 
 /// <summary>
 /// The web's sessions: started by signing in, found by the cookie's secret, slid on as they're used, marked by
@@ -56,14 +63,15 @@ public class WebSessions(GuardDb guardDb, IMemoryCache cache, IOpenIddictAuthori
 
     /// <summary>
     /// A new session for an account that just proved who it is; the secret is the cookie's, never kept. A web view's
-    /// session names the phone app's sign-in it came from, and when that proved who the person is.
+    /// session names the phone app's sign-in it came from, and when that proved who the person is. A sign-in whose second
+    /// step was strong (a passkey, the app) starts it strong too; one with a recovery code says so.
     /// </summary>
     public async Task<(WebSession Session, string Secret)> StartAsync(Guid accountId, string? userAgent, string? ip, string? parentAuthorizationId = null,
-        DateTime? authTime = null, CancellationToken cancellationToken = default)
+        DateTime? authTime = null, CancellationToken cancellationToken = default, DateTime? strongAuthTime = null, DateTime? recoveryAuthTime = null)
     {
         string secret = Base64Url(RandomNumberGenerator.GetBytes(32));
         WebSession session = new(Guid.NewGuid(), accountId, Hash(secret), DateTime.UtcNow.Add(Lifetime), userAgent is { Length: > 256 } ? userAgent[..256] : userAgent, ip,
-            parentAuthorizationId, authTime);
+            parentAuthorizationId, authTime, strongAuthTime, recoveryAuthTime);
         await guardDb.RunAsync(async db =>
         {
             db.WebSessions.Add(session);
@@ -90,7 +98,7 @@ public class WebSessions(GuardDb guardDb, IMemoryCache cache, IOpenIddictAuthori
             var found = await db.WebSessions.AsNoTracking()
                 .Where(s => s.TokenHash == hash && s.RevokedAt == null && s.ExpiresAt > now)
                 .Join(db.Accounts.Where(a => a.Status == AccountStatus.Active), s => s.AccountId, a => a.Id,
-                    (s, a) => new { s.Id, s.AccountId, a.Username, a.DisplayName, s.AuthTime, s.LastSeenAt, s.ParentAuthorizationId })
+                    (s, a) => new { s.Id, s.AccountId, a.Username, a.DisplayName, s.AuthTime, s.StrongAuthTime, s.RecoveryAuthTime, s.LastSeenAt, s.ParentAuthorizationId })
                 .FirstOrDefaultAsync(cancellationToken);
             if (found is null)
             {
@@ -115,7 +123,7 @@ public class WebSessions(GuardDb guardDb, IMemoryCache cache, IOpenIddictAuthori
                     .ExecuteUpdateAsync(set => set.SetProperty(s => s.LastSeenAt, now).SetProperty(s => s.ExpiresAt, expiresAt), cancellationToken);
             }
 
-            WebSessionInfo info = new(found.Id, found.AccountId, found.Username, found.DisplayName, found.AuthTime, hash);
+            WebSessionInfo info = new(found.Id, found.AccountId, found.Username, found.DisplayName, found.AuthTime, hash, found.StrongAuthTime, found.RecoveryAuthTime);
             cache.Set(Key(hash), info, Remembered);
             return (info, slid);
         }, requiresNew: true, cancellationToken);
@@ -182,8 +190,15 @@ public class WebSessions(GuardDb guardDb, IMemoryCache cache, IOpenIddictAuthori
     }
 
     /// <summary>A step-up passed: the session says the person proved who they are just now. Null when it has ended.</summary>
-    public Task<DateTime?> MarkSteppedUpAsync(Guid sessionId, CancellationToken cancellationToken = default) =>
-        guardDb.RunAsync<DateTime?>(async db =>
+    public async Task<DateTime?> MarkSteppedUpAsync(Guid sessionId, CancellationToken cancellationToken = default) =>
+        (await MarkSteppedUpAsync(sessionId, strong: false, cancellationToken))?.AuthTime;
+
+    /// <summary>
+    /// A step-up passed: the session says the person proved who they are just now, and for a strong one (a passkey, or the
+    /// password and the app) that they did so strongly. Null when it has ended.
+    /// </summary>
+    public Task<WebSessionStepUp?> MarkSteppedUpAsync(Guid sessionId, bool strong, CancellationToken cancellationToken = default) =>
+        guardDb.RunAsync<WebSessionStepUp?>(async db =>
         {
             WebSession? session = await db.WebSessions.FirstOrDefaultAsync(s => s.Id == sessionId, cancellationToken);
             if (session is null || !session.IsActive(DateTime.UtcNow))
@@ -192,19 +207,25 @@ public class WebSessions(GuardDb guardDb, IMemoryCache cache, IOpenIddictAuthori
             }
 
             session.AuthTime = DateTime.UtcNow;
+            if (strong)
+            {
+                session.StrongAuthTime = session.AuthTime;
+            }
+
             await db.SaveChangesAsync(cancellationToken);
             Forget(session.TokenHash);
-            return session.AuthTime;
+            return new WebSessionStepUp(session.AuthTime, session.StrongAuthTime);
         }, requiresNew: true, cancellationToken);
 
     /// <summary>
     /// A code the phone app opens a web view with: good once, for seconds, for a session that belongs to the
     /// app's sign-in. Only its hash is kept.
     /// </summary>
-    public async Task<(string Code, DateTime ExpiresAt)> HandOffAsync(Guid accountId, string authorizationId, DateTime authTime, CancellationToken cancellationToken = default)
+    public async Task<(string Code, DateTime ExpiresAt)> HandOffAsync(Guid accountId, string authorizationId, DateTime authTime, CancellationToken cancellationToken = default,
+        DateTime? strongAuthTime = null)
     {
         string code = Base64Url(RandomNumberGenerator.GetBytes(32));
-        SessionHandoff handoff = new(Guid.NewGuid(), Hash(code), accountId, authorizationId, authTime, DateTime.UtcNow.Add(HandoffLifetime));
+        SessionHandoff handoff = new(Guid.NewGuid(), Hash(code), accountId, authorizationId, authTime, DateTime.UtcNow.Add(HandoffLifetime), strongAuthTime);
         await guardDb.RunAsync(async db =>
         {
             db.SessionHandoffs.Add(handoff);
@@ -309,10 +330,24 @@ public sealed class WebSessionHandler(IOptionsMonitor<AuthenticationSchemeOption
         identity.AddClaim(new Claim("display_name", found.Info.DisplayName));
         identity.AddClaim(new Claim(SessionIdClaim, found.Info.Id.ToString()));
         // Every sign-in so far is a password checked by the account's directory (OpenID Connect's "pwd").
-        identity.AddClaim(new Claim(ActingContext.AuthTimeClaim, new DateTimeOffset(found.Info.AuthTime, TimeSpan.Zero).ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        identity.AddClaim(new Claim(ActingContext.AuthTimeClaim, Seconds(found.Info.AuthTime)));
+        // When the person last proved who they are strongly (a passkey, or the password and the app), and signed in with a recovery code.
+        if (found.Info.StrongAuthTime is { } strong)
+        {
+            identity.AddClaim(new Claim(ActingContext.StrongAuthTimeClaim, Seconds(strong)));
+        }
+
+        if (found.Info.RecoveryAuthTime is { } recovery)
+        {
+            identity.AddClaim(new Claim(ActingContext.RecoveryAuthTimeClaim, Seconds(recovery)));
+        }
+
         identity.AddClaim(new Claim("amr", "pwd"));
         return AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName));
     }
+
+    private static string Seconds(DateTime at) =>
+        new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc)).ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>
     /// The anti-forgery value a request came with: the header, or for a plain HTML form (the OAuth consent page's, which
