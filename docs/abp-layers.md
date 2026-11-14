@@ -13,7 +13,7 @@ together, but it isn't split into ABP's standard module layers. This page maps o
 | `*.HttpApi` | `AbpGuard.HttpApi` (since 0.5.0): `Controllers/`, under `api/guard/*`, plus OpenIddict's endpoints (`/connect/*`) |
 | `*.HttpApi.Client` | Not yet |
 | `*.Web` / `*.Blazor` | `@abpjs/guard` (planned), released with the packages |
-| Request-time helpers | `AbpGuard.Acting`: `ActingContext` (who is acting, and as what), `[StepUp]` (the password again), read-only requests |
+| Request-time helpers | `AbpGuard.Acting`: `ActingContext` (who is acting, and as what), `[StepUp("category")]` (the password again, or a passkey or the app for a strong category), read-only requests |
 
 ## What works the ABP way
 

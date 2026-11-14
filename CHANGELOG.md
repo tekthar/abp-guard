@@ -6,6 +6,112 @@ change the API.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-14
+
+Passkeys, a strong step-up for the dangerous categories, and a rule that every site admin has a strong factor. Two
+migrations, run at start as the others are: `Passkeys` (the tables `guard.passkeys` and `guard.passkey_challenges`,
+the columns `sessions.StrongAuthTime`, `sessions.RecoveryAuthTime` and `session_handoffs.StrongAuthTime`) and
+`AdminsStrongFactor` (`accounts.StrongFactorDueAt`).
+
+### Added
+
+- **Passkeys** (WebAuthn, with Fido2NetLib 4.3.2, MIT), a second factor beside the authenticator app: discoverable
+  (`residentKey: 'required'`) and with user verification, as many as a person likes, each with its name, provider (from
+  the AAGUIDs of the common password managers, platforms and security keys, kept in the package; null when unknown) and
+  whether it's synced (`backedUp`). The options and answers are the browser's JSON
+  (`PublicKeyCredentialCreationOptionsJSON`, `PublicKeyCredentialRequestOptionsJSON`, the credential's `toJSON()`):
+  - `POST api/guard/me/passkeys/options`, `POST api/guard/me/passkeys` `{ name, credential }` (the factor, with
+    `recoveryCodes` when it's the person's first), `PUT api/guard/me/passkeys/{id}` `{ name }`; removing is
+    `DELETE api/guard/me/second-factors/{id}`.
+  - A step-up with a passkey alone: `POST api/guard/session/step-up/options`, then `POST api/guard/session/step-up`
+    `{ method: 'passkey', credential }`.
+  - A sign-in's second step: `POST api/guard/session/second-step/options` `{ ticket }`, then
+    `POST api/guard/session/second-factor` `{ ticket, method: 'passkey', credential }` (or the token endpoint's second
+    step with the `credential` parameter).
+  - Setting one up at sign-in: `POST api/guard/second-factor/enrol/passkey/options` `{ ticket }` and
+    `POST api/guard/second-factor/enrol/passkey` `{ ticket, name, credential }`, beside the app.
+  - Every challenge is good once, for five minutes, for the purpose and the web session (an app's sign-in, or the
+    sign-in's ticket) that asked; options are 20 per session or ticket in five minutes. A refused answer (origin,
+    relying party, challenge, user verification, signature, a signature count that went back) is `passkey_rejected`,
+    and counts with wrong codes; the same device's passkey again is `passkey_exists`; asking a person with none to
+    prove with one is `no_passkey`.
+  - The relying party: `Guard:Passkeys:RpId`, `Guard:Passkeys:Origins` (a list, or comma-separated) and
+    `Guard:Passkeys:RpName`, by default the host and origin of `Guard:PublicUrl` and the product's name.
+- **Strong proofs:** beside `auth_time`, a session (a column) and a token (a claim) carry `strong_auth_time`: a sign-in
+  whose second step was a passkey or the app, a step-up with a passkey, or the password and the app's code (the answer
+  carries `authTime` and `strongAuthTime`). A sign-in with a recovery code carries `recovery_auth_time`, which counts as
+  strong for setting up a new factor alone. `ActingContext.StrongAuthTime` and `RecoveryAuthTime` read them; the phone's
+  handoff carries the strong one to its web view.
+- **Step-up by category:** `[StepUp("roles")]`, `StepUpGuard.EnsureAsync("roles")`, and `StepUpGuard.EnsureAtAsync` for a
+  level the code decides. A category is `strong` when `Guard:StepUp:Strong` (environment `Guard__StepUp__Strong`) lists
+  it: a comma-separated list, `*` for every one, or `none`; by default `plugins, roles, security, directories, apps,
+  service-accounts, admin-tokens, exports, backups, scripts, secrets, sites` (`StepUpCategories.DefaultStrong`). A strong
+  one passes on `strong_auth_time` within the site's window, never on the password alone or with a sent or recovery code.
+  `403 step_up_required`'s data gains `level`, `category` and `methods` (the person's ways, best first: `passkey`, `app`,
+  `password`, `email`…); `403 strong_factor_required` (`data: { category }`) answers someone with no strong factor yet.
+  `IStepUpLevels` decides (Guard's `GuardStepUpLevels`); with `Guard:TwoFactor:Disabled` no category is strong.
+- **`IStepUpTokenPolicy`**: a host may let a personal access token through a category it names (by default none passes),
+  for automation such as a publisher's CI.
+- **The site admins' rule:** `Guard:Admins:RequireStrongFactor` (environment `Guard__Admins__RequireStrongFactor`, off by
+  default) makes every site admin (whoever's roles can manage everything) have a passkey or the app, within
+  `Guard:Admins:GraceHours` (48) of when Guard first sees them without one (a sign-in, or their session read). Past it,
+  signing in asks them to set one up first; while it holds, their last strong factor can't be removed
+  (`last_strong_factor`); an admin's reset of their factors starts their grace again. The security log has
+  `account.strong-factor.grace`, `auth.strong-factor.enrol` and `account.strong-factor.set-up`.
+- **Who must:** `GET api/guard/me` gains `strongFactor: { has, methods, requiredBy, overdue }`;
+  `GET api/guard/me/second-factors` (and an admin's `GET api/guard/accounts/{id}/second-factors`) list passkeys beside the
+  app, each with `strong`, and the person's `strong`, `requiredBy` and `overdue`. `GET api/guard/security/settings` gains
+  `stepUpStrong` and `adminsStrongFactor: { required, graceHours, source: 'environment', variable }`, read-only.
+- **An admin removes one of a person's factors** for a lost device: `DELETE api/guard/accounts/{id}/second-factors/{factorId}`
+  (category `security`), as the reset is.
+- **Notices:** every factor added or removed, by the person or an admin, or reset, is told to the person by mail where
+  mail reaches them (`guard.second-factor-added`, `guard.second-factor-removed`, English and Arabic, which hosts may reword).
+- **Personal data:** passkeys and their challenges are in the data map (`guard.sign-in-secrets`), a person's export
+  (`passkeys`: name, provider, created, last used) and erasure.
+
+### Changed
+
+- **Guard's own marks name categories:** `accounts`, `roles` (roles, grants, groups and their members, merges, anonymous
+  grants), `security` (security settings, retention, the security feed, sign-up, second-factor methods, a group's
+  two-factor mode, an admin's reset or removal of someone's factors), `directories`, `apps`, `service-accounts`,
+  `privacy` (exports of a person's data, erasures, holds, consent, the record of processing), `profile` (a person's own
+  name and addresses), `factors`, `tokens`, and `admin-tokens` for a token a site admin makes. With the defaults, roles,
+  groups, security settings, directories, apps, service accounts and an admin's own tokens need a strong step-up.
+- **A person's factors:** adding one needs a strong step-up once they have a strong factor (a password-level one for their
+  first; a sign-in with a recovery code counts for adding alone); removing their last strong one needs a strong step-up.
+  A group's `strong` mode takes a passkey as well as the app, and a sign-in's methods list `passkey` first.
+- Removing the last factor while a group requires one is refused with the code `last_strong_factor`.
+- `StepUpAttribute` takes a category (`Category`); `StepUpFilter` is made with one. `SecondFactorDto`,
+  `MySecondFactorsDto`, `SecondStepPassed`, `SessionStepUpDto`, `SecuritySettingsDto` and `WebSessionInfo` gain members;
+  `SecondFactors.PassAsync` takes a passkey's `credential`, `StepUpAsync` says whether a step-up was strong,
+  `WebSessions.MarkSteppedUpAsync(id, strong)` marks a strong one, and `SecondFactors`' constructor takes `Passkeys`,
+  `IGuardSiteDefaults` and `AdminsStrongFactor`.
+- The token endpoint's tokens carry `strong_auth_time` after a second step with the app or a passkey, or a refresh's
+  step-up with the app's code, and `recovery_auth_time` after a recovery code; a refresh keeps both.
+
+### Upgrading
+
+- Reference 0.7.0 of every AbpGuard package. The two migrations run at start (`GuardDatabase.MigrateAsync`).
+- **Give passkeys the site's address:** `Guard:PublicUrl`, or `Guard:Passkeys:RpId` and `Guard:Passkeys:Origins`. Outside
+  Development, without one, adding or using a passkey fails with an error that says what to set, and the start logs it.
+  A site moved to a new address keeps its passkeys only while the old origin stays in `Guard:Passkeys:Origins`.
+- **Decide the strong categories before the upgrade reaches people:** with the defaults, an admin with no passkey or
+  authenticator app can't change roles, groups, security settings, directories, apps or service accounts until they set
+  one up (`strong_factor_required`); their first factor needs only a password-level step-up. Set
+  `Guard__StepUp__Strong=none` to keep every step-up at the password level while your admins set theirs up, or list your
+  own categories.
+- **Name your own marks' categories:** `[StepUp("plugins")]`, `EnsureAsync("backups")`, and list any of your own you want
+  strong in `Guard:StepUp:Strong`. A mark without one still compiles and stays at the password level (strong only under
+  `*`). A host that needs a token through a mark registers an `IStepUpTokenPolicy`.
+- **Your step-up prompt** reads `error.data.level` and `methods`: at `strong`, offer a passkey
+  (`session/step-up/options`, then `{ method: 'passkey', credential }`) or the password with the app's code; on
+  `strong_factor_required`, offer to set one up. Recovery and sent codes never pass a strong category.
+- **The site admins' rule** is off until you turn it on: `Guard__Admins__RequireStrongFactor=true` and, if 48 hours isn't
+  right, `Guard__Admins__GraceHours`.
+- Code that makes `SecondFactors` or a `StepUpFilter` itself (a test double, say) follows the new constructors above.
+- Not yet in the package: a step-up with a passkey on the token endpoint (the phone's), and signing in with a passkey
+  alone.
+
 ## [0.6.0] - 2026-11-14
 
 Accounts and groups in pages, as ABP's lists page. No new tables or columns; every other route is as it was.

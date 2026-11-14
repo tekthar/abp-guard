@@ -16,9 +16,12 @@ instead of writing its own security. Nothing in it assumes one product: every na
 - **Groups:** nested groups, organizations and email-domain groups, imports.
 - **Sign-in:** web sessions with CSRF protection, rate limits, an OpenIddict server (password, refresh and code grants)
   with its token endpoint, OAuth apps with consent, dynamic client registration, and personal access tokens.
-- **Step-up:** sensitive actions ask for the password again within a window; a personal access token never passes.
-- **Two-factor sign-in:** authenticator apps (TOTP), recovery codes and codes sent by email or a host's own channels,
-  with Off, Optional or Required per group.
+- **Step-up by category:** sensitive actions ask for the password again within a window, and the dangerous categories
+  (roles, security settings, directories, apps…, the server operator's to choose) for a strong proof: a passkey, or the
+  password and an authenticator app. A personal access token never passes, unless the host's policy names its category.
+- **Two-factor sign-in:** passkeys (WebAuthn), authenticator apps (TOTP), recovery codes and codes sent by email or a
+  host's own channels, with Off, Optional, Required or Strong per group, and a rule the server's operator may turn on that
+  every site admin has a passkey or an authenticator app.
 - **Self-service:** sign-up with a confirmed email, and password reset.
 - **Authorization with [CASL .NET](https://www.nuget.org/packages/Casl.Net):** roles hold rules in CASL's format; grants
   give a role to an account or a group with a scope; the same rules filter queries in SQL and go to the browser.
@@ -92,6 +95,17 @@ Configure it in the `Guard` section (`GuardOptions`):
 - **Two-factor:** `TwoFactor:Issuer` is the name authenticator apps show. By default it is your product's English name
   and the site's host. Set `TwoFactor:ListsRecovery` to list "recovery" among the second step's methods when the person
   has recovery codes left.
+- **Passkeys:** they belong to the site's address, `PublicUrl` by default; `Passkeys:RpId` (a domain), `Passkeys:Origins`
+  (the pages' origins, a list or comma-separated) and `Passkeys:RpName` set it otherwise. Outside Development, a site
+  with neither can't add or use a passkey, and says what to set. Keep an old address in `Origins` after a move, or its
+  passkeys stop working.
+- **Step-up levels:** `StepUp:Strong` lists the categories that need a strong proof, comma-separated, `*` for all or
+  `none`; by default `plugins, roles, security, directories, apps, service-accounts, admin-tokens, exports, backups,
+  scripts, secrets, sites`. Your own marks name their categories, `[StepUp("publishing")]`, and may be listed too. It's
+  the server operator's (environment `Guard__StepUp__Strong`): no page changes it.
+- **Site admins:** `Admins:RequireStrongFactor` (off by default; environment `Guard__Admins__RequireStrongFactor`) makes
+  every site admin have a passkey or an authenticator app, within `Admins:GraceHours` (48) of when Guard first sees them
+  without one; after it, signing in asks them to set one up first.
 - **Data folder:** `DataRoot` is where Guard looks once for sign-in key files kept on disk, and keeps them when there's
   no database for them. A host can give its own setting instead (`GuardStartupOptions`, through ABP's PreConfigure).
 
@@ -105,8 +119,9 @@ decides who may ask. Guard refuses tokens for an agent's account and audits each
 server needs the same certificate with its private key.
 
 A host can replace each of Guard's seams with its own service: `IGuardMessenger`, `IGuardLocks`, `IGuardRateLimits`,
-`IGuardEventSink`, `IGuardBroadcast`, `IGuardSiteDefaults`, `ISignUpChallenges`, `ITokenRestrictions` and
-`ISecurityFeedSender`. Otherwise Guard uses its defaults.
+`IGuardEventSink`, `IGuardBroadcast`, `IGuardSiteDefaults`, `ISignUpChallenges`, `ITokenRestrictions`,
+`ISecurityFeedSender` and `IStepUpTokenPolicy` (which personal access tokens may pass a step-up mark, by its category; none
+by default). Otherwise Guard uses its defaults.
 
 **Behind a proxy or load balancer**, tell ASP.NET Core which proxies to trust, before Guard's middleware, so Guard sees
 each person's own address and scheme. Sign-in limits count wrong passwords per IP address; without this, every request
