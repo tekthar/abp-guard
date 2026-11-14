@@ -31,7 +31,7 @@
   <PropertyGroup>
     <AbpVersion>10.6.1</AbpVersion>
     <!-- One version for every OpenIddict package: its server, validation and stores are released together. -->
-    <OpenIddictVersion>7.7.1</OpenIddictVersion>
+    <OpenIddictVersion>7.8.0</OpenIddictVersion>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(IsPackable)' != 'false'">
