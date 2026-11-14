@@ -40,6 +40,8 @@ On [nuget.org](https://www.nuget.org/packages?q=AbpGuard):
 | `AbpGuard.Acting` | The acting context (whose rights a request uses and who acts), step-up, read-only requests, error codes, the names Guard writes. |
 | `AbpGuard` | The ABP module: domain, services, controllers, the EF Core contexts and their migrations. |
 
+Coming from ABP's module template? [Where ABP's layers are in this repository](docs/abp-layers.md).
+
 ## Use it in a host
 
 `samples/AbpGuard.SampleHost` is a complete host with Guard's defaults only. In short:
