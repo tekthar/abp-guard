@@ -21,7 +21,16 @@ public sealed record SecuritySettingsDto(int RetentionDays, int MinRetentionDays
     int TokenMaxDays, int MinTokenMaxDays, int MaxTokenMaxDays, bool AppsMayRegister = false)
 {
     public List<string> StepUpStrong { get; init; } = [];
+
+    /// <summary>The site admins' rule, read-only: the server's operator sets it in the environment, no page.</summary>
+    public AdminsStrongFactorDto AdminsStrongFactor { get; init; } = new(false, 48, "environment", GuardAdminsOptions.RequireStrongFactorVariable);
 }
+
+/// <summary>
+/// Whether every site admin must have a strong factor (a passkey or an authenticator app), how many hours they have to set
+/// one up, and where that's set: <c>source: 'environment'</c>, the variable <c>Guard__Admins__RequireStrongFactor</c>.
+/// </summary>
+public sealed record AdminsStrongFactorDto(bool Required, int GraceHours, string Source, string Variable);
 
 /// <summary>The settings to save; TokenMaxDays left out keeps what's saved.</summary>
 public sealed record SecuritySettingsInput([property: JsonRequired] int RetentionDays, [property: JsonRequired] int StepUpMinutes, int? TokenMaxDays = null,
@@ -33,7 +42,7 @@ public sealed record SecuritySettingsInput([property: JsonRequired] int Retentio
 /// </summary>
 [Route("api/guard/security/settings")]
 [Authorize(Policy = GuardPolicies.Admin)]
-public class SecuritySettingsController(GuardDb guardDb, SecurityLog audit, GuardStepUpLevels levels) : GuardControllerBase
+public class SecuritySettingsController(GuardDb guardDb, SecurityLog audit, GuardStepUpLevels levels, Services.TwoFactor.AdminsStrongFactor admins) : GuardControllerBase
 {
     [HttpGet]
     public Task<SecuritySettingsDto> Get(CancellationToken cancellationToken) =>
@@ -101,6 +110,7 @@ public class SecuritySettingsController(GuardDb guardDb, SecurityLog audit, Guar
         s.TokenMaxDays, SecuritySettings.MinTokenMaxDays, SecuritySettings.MaxTokenMaxDays, s.AppsMayRegister)
     {
         StepUpStrong = levels.Strong.Shown(),
+        AdminsStrongFactor = new(admins.Required, (int)admins.Grace.TotalHours, "environment", GuardAdminsOptions.RequireStrongFactorVariable),
     };
 }
 

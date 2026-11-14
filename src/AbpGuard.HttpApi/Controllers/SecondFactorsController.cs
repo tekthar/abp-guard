@@ -225,8 +225,13 @@ public static class FactorStepUps
 [GuardFeature(nameof(GuardFeatures.TwoFactor))]
 public class MySecondFactorsController(SecondFactors secondFactors) : GuardControllerBase
 {
+    /// <summary>The person's factors and what's asked of them; reading it starts a site admin's grace, as reading their session does.</summary>
     [HttpGet]
-    public Task<MySecondFactorsDto> Get(CancellationToken cancellationToken) => secondFactors.ListAsync(CurrentAccountId, cancellationToken);
+    public async Task<MySecondFactorsDto> Get([FromServices] AdminsStrongFactor admins, CancellationToken cancellationToken)
+    {
+        await admins.CheckAsync(CurrentAccountId, ClientIp, cancellationToken);
+        return await secondFactors.ListAsync(CurrentAccountId, cancellationToken);
+    }
 
     /// <summary>Starts setting up the authenticator app: its secret, address and QR code.</summary>
     [HttpPost("app")]

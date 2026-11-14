@@ -104,6 +104,9 @@ namespace AbpGuard.Data.Migrations
                     b.Property<string>("StatusReason")
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("StrongFactorDueAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("TimeZone")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");

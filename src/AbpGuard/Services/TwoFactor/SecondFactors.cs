@@ -136,7 +136,8 @@ public sealed class SecondFactors(
     ILogger<SecondFactors> logger,
     IOptions<GuardNames> names,
     Passkeys passkeys,
-    IGuardSiteDefaults siteDefaults) : ITransientDependency
+    IGuardSiteDefaults siteDefaults,
+    AdminsStrongFactor admins) : ITransientDependency
 {
     public const int RecoveryCodeCount = 10;
     private const int MaxWrongCodes = 10;
@@ -150,7 +151,20 @@ public sealed class SecondFactors(
     private IDataProtector Protector => protection.CreateProtector(names.Value.Purpose("SecondFactor.v1"));
 
     /// <summary>The emergency switch: nobody is asked for a second factor.</summary>
-    public bool Disabled => configuration.GetValue("Guard:TwoFactor:Disabled", false) || !options.Value.Features.TwoFactor;
+    public bool Disabled => IsDisabled(configuration, options.Value);
+
+    /// <summary>Whether second factors are switched off: Guard:TwoFactor:Disabled, or the TwoFactor feature off.</summary>
+    public static bool IsDisabled(IConfiguration configuration, GuardOptions guard) => configuration.GetValue("Guard:TwoFactor:Disabled", false) || !guard.Features.TwoFactor;
+
+    /// <summary>
+    /// The mode a person's second step follows: their groups' strictest, raised to <c>strong</c> for a site admin past their
+    /// grace under the site admins' rule, so signing in asks them to set up a strong factor first.
+    /// </summary>
+    private async Task<string> EffectiveModeAsync(GuardDbContext db, Account account, CancellationToken cancellationToken)
+    {
+        string mode = await ModeAsync(db, account, cancellationToken);
+        return admins.On && account.StrongFactorDueAt is { } due && due <= DateTime.UtcNow ? TwoFactorModes.Strictest([mode, TwoFactorModes.Strong]) : mode;
+    }
 
     /// <summary>The strictest mode of every group the person is in, directly, nested or synced.</summary>
     public async Task<string> ModeAsync(GuardDbContext db, Account account, CancellationToken cancellationToken)
@@ -166,17 +180,20 @@ public sealed class SecondFactors(
 
     /// <summary>
     /// After a right password: null when no second step is asked, else a ticket for it. A person is asked when a group of
-    /// theirs requires it, or when they set a second factor up themselves.
+    /// theirs requires it, or when they set a second factor up themselves; a site admin past their grace under the site
+    /// admins' rule sets up a strong one first (the grace starts here the first time Guard sees them without one).
     /// </summary>
-    public Task<SecondFactorChallengeDto?> ChallengeAsync(Guid accountId, string client, string? scopes, string? ip, CancellationToken cancellationToken) =>
-        guardDb.RunAsync<SecondFactorChallengeDto?>(async db =>
+    public async Task<SecondFactorChallengeDto?> ChallengeAsync(Guid accountId, string client, string? scopes, string? ip, CancellationToken cancellationToken)
+    {
+        StrongFactorDue due = Disabled ? StrongFactorDue.None : await admins.CheckAsync(accountId, ip, cancellationToken);
+        (SecondFactorChallengeDto? challenge, string? username) = await guardDb.RunAsync<(SecondFactorChallengeDto?, string?)>(async db =>
         {
             Account account = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == accountId, cancellationToken);
-            string mode = await ModeAsync(db, account, cancellationToken);
+            string mode = await EffectiveModeAsync(db, account, cancellationToken);
             List<string> kinds = await KindsAsync(db, accountId, cancellationToken);
             if (Disabled || (!TwoFactorModes.Asks(mode) && kinds.Count == 0))
             {
-                return null;
+                return (null, account.Username);
             }
 
             // A passkey first, then the app; then the codes the site sends, by what reaches the person, unless a strong group
@@ -197,8 +214,16 @@ public sealed class SecondFactors(
             await db.SignInTickets.Where(t => t.ExpiresAt < DateTime.UtcNow).ExecuteDeleteAsync(cancellationToken);
             await db.SentCodes.Where(c => c.ExpiresAt < DateTime.UtcNow).ExecuteDeleteAsync(cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
-            return new SecondFactorChallengeDto(ticket, methods, methods.Count == 0, strong, row.ExpiresAt, senders);
+            return (new SecondFactorChallengeDto(ticket, methods, methods.Count == 0, strong, row.ExpiresAt, senders), account.Username);
         }, requiresNew: true, cancellationToken);
+
+        if (due.Overdue && challenge is { Enrol: true })
+        {
+            await admins.SentToEnrolAsync(accountId, username!, ip, cancellationToken);
+        }
+
+        return challenge;
+    }
 
     /// <summary>
     /// The second step: the ticket and a code of the method (the app, a sent code or a recovery code), or a passkey's
@@ -242,7 +267,7 @@ public sealed class SecondFactors(
                     return (null, account.Id, account.Username, "blocked");
                 }
 
-                bool strong = await ModeAsync(db, account, cancellationToken) == TwoFactorModes.Strong;
+                bool strong = await EffectiveModeAsync(db, account, cancellationToken) == TwoFactorModes.Strong;
                 if (!await CheckCodeAsync(db, account.Id, method, code, strong, now, cancellationToken, Passkeys.TicketBinding(hash), credential))
                 {
                     return (null, account.Id, account.Username, "code");
@@ -296,7 +321,7 @@ public sealed class SecondFactors(
             // no way to give a code yet passes, or they could never step up to set one up.
             Account account = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == accountId, cancellationToken);
             if (!await HasFactorAsync(db, accountId, cancellationToken)
-                && (await ModeAsync(db, account, cancellationToken) is var mode && (!TwoFactorModes.Asks(mode) || mode == TwoFactorModes.Strong)
+                && (await EffectiveModeAsync(db, account, cancellationToken) is var mode && (!TwoFactorModes.Asks(mode) || mode == TwoFactorModes.Strong)
                     || (await SendersAsync(db, account, cancellationToken)).Count == 0))
             {
                 return (null, false, null);
@@ -313,7 +338,7 @@ public sealed class SecondFactors(
                 return ("too_many_attempts", false, account.Username);
             }
 
-            bool strong = await ModeAsync(db, account, cancellationToken) == TwoFactorModes.Strong;
+            bool strong = await EffectiveModeAsync(db, account, cancellationToken) == TwoFactorModes.Strong;
             if (method != SecondFactorKinds.Passkey && await CheckCodeAsync(db, accountId, method, code, strong, DateTime.UtcNow, cancellationToken))
             {
                 await limits.ResetAsync(WrongKey(accountId), cancellationToken);
@@ -405,7 +430,7 @@ public sealed class SecondFactors(
 
             List<string> methods = [.. kinds.Where(k => k == SecondFactorKinds.Passkey), .. kinds.Where(k => k == SecondFactorKinds.App), Acting.StepUpLevels.Password];
             if (!Disabled && await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == accountId, cancellationToken) is { } account
-                && await ModeAsync(db, account, cancellationToken) != TwoFactorModes.Strong)
+                && await EffectiveModeAsync(db, account, cancellationToken) != TwoFactorModes.Strong)
             {
                 methods.AddRange((await SendersAsync(db, account, cancellationToken)).Select(s => s.Method));
             }
@@ -491,6 +516,7 @@ public sealed class SecondFactors(
         }, requiresNew: true, cancellationToken);
         if (done is not null)
         {
+            await admins.MetAsync(accountId, cancellationToken);
             await NotifyAsync(accountId, SecondFactorMail.Added, FactorChange.Added(SecondFactorKinds.App, null), cancellationToken);
         }
 
@@ -561,6 +587,7 @@ public sealed class SecondFactors(
 
         if (result.Added is { } added)
         {
+            await admins.MetAsync(accountId, cancellationToken);
             await NotifyAsync(accountId, SecondFactorMail.Added, FactorChange.Added(SecondFactorKinds.Passkey, added.Name), cancellationToken);
         }
 
@@ -634,7 +661,7 @@ public sealed class SecondFactors(
                 return null;
             }
 
-            bool strong = await ModeAsync(db, account, cancellationToken) == TwoFactorModes.Strong;
+            bool strong = await EffectiveModeAsync(db, account, cancellationToken) == TwoFactorModes.Strong;
             return strong || (await SendersAsync(db, account, cancellationToken)).Count == 0 ? row.AccountId : null;
         }, cancellationToken: cancellationToken);
     }
@@ -655,6 +682,10 @@ public sealed class SecondFactors(
             await db.SignInTickets.Where(t => t.TicketHash == hash).ExecuteUpdateAsync(u => u.SetProperty(t => t.Attempts, t => t.Attempts + 1), cancellationToken);
         }, requiresNew: true, cancellationToken);
 
+    /// <summary>
+    /// A person's factors, their groups' mode, the recovery codes left, and by when the site admins' rule asks them to have a
+    /// strong factor (as last seen: <see cref="AdminsStrongFactor.CheckAsync"/> brings it up to date).
+    /// </summary>
     public Task<MySecondFactorsDto> ListAsync(Guid accountId, CancellationToken cancellationToken) =>
         guardDb.RunAsync(async db =>
         {
@@ -665,9 +696,12 @@ public sealed class SecondFactors(
             List<SecondFactorDto> factors = [.. apps.Concat((await Passkeys.OfAsync(db, accountId, cancellationToken)).Select(SecondFactorDto.Of)).OrderBy(f => f.CreatedAt)];
             int left = await db.RecoveryCodes.CountAsync(c => c.AccountId == accountId && c.UsedAt == null, cancellationToken);
             List<SecondFactorSenderDto> senders = Disabled || mode == TwoFactorModes.Strong ? [] : await SendersAsync(db, account, cancellationToken);
-            return new MySecondFactorsDto(mode, !Disabled && (TwoFactorModes.Asks(mode) || factors.Count > 0), factors, left, Disabled, senders)
+            DateTime? requiredBy = admins.On && !factors.Any(f => f.Strong) ? account.StrongFactorDueAt : null;
+            return new MySecondFactorsDto(mode, !Disabled && (TwoFactorModes.Asks(mode) || factors.Count > 0 || requiredBy is not null), factors, left, Disabled, senders)
             {
                 Strong = factors.Any(f => f.Strong),
+                RequiredBy = requiredBy,
+                Overdue = requiredBy <= DateTime.UtcNow,
             };
         }, cancellationToken: cancellationToken);
 
@@ -730,7 +764,7 @@ public sealed class SecondFactors(
         {
             Account account = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == accountId, cancellationToken);
             if (!(await GuardSecuritySettings.LoadAsync(db, cancellationToken)).SecondFactorMethods.Contains(method!)
-                || await ModeAsync(db, account, cancellationToken) == TwoFactorModes.Strong)
+                || await EffectiveModeAsync(db, account, cancellationToken) == TwoFactorModes.Strong)
             {
                 return (null, "method_not_allowed", account.Username, null);
             }
@@ -814,11 +848,12 @@ public sealed class SecondFactors(
 
     /// <summary>
     /// Removes one of the person's second factors (the app, or a passkey), by them or, for a lost device, an admin; not
-    /// the last one while a group of theirs requires one (<c>last_strong_factor</c>). Recovery codes go with the last. The
-    /// person is told.
+    /// the last one while a group of theirs requires one, or while the site admins' rule holds them (<c>last_strong_factor</c>;
+    /// an admin's reset removes them all instead). Recovery codes go with the last. The person is told.
     /// </summary>
     public async Task RemoveAsync(Guid accountId, Guid factorId, CancellationToken cancellationToken, bool byAdmin = false)
     {
+        bool held = await admins.HoldsAsync(accountId, cancellationToken);
         (string kind, string? name) = await guardDb.RunAsync(async db =>
         {
             SecondFactor? factor = await db.SecondFactors.FirstOrDefaultAsync(f => f.Id == factorId && f.AccountId == accountId, cancellationToken);
@@ -831,6 +866,11 @@ public sealed class SecondFactors(
             Account account = await db.Accounts.AsNoTracking().FirstAsync(a => a.Id == accountId, cancellationToken);
             bool last = !await db.SecondFactors.AnyAsync(f => f.AccountId == accountId && f.Id != factorId && f.ConfirmedAt != null, cancellationToken)
                 && !await db.Passkeys.AnyAsync(p => p.AccountId == accountId && p.Id != factorId, cancellationToken);
+            if (last && held)
+            {
+                throw new UserFriendlyException("Site admins must keep a passkey or an authenticator app: set up another one before removing this.", LastStrongFactor);
+            }
+
             if (last && TwoFactorModes.Asks(await ModeAsync(db, account, cancellationToken)))
             {
                 throw new UserFriendlyException("A group you're in requires a second factor: set up another one before removing this.", LastStrongFactor);
@@ -890,6 +930,8 @@ public sealed class SecondFactors(
             logger.LogInformation("An admin reset the second factors of {Username}", account.Username);
             return removed;
         }, requiresNew: true, cancellationToken);
+        // A site admin under the rule starts their grace again: they set one up anew.
+        await admins.RestartAsync(accountId, cancellationToken);
         if (removed > 0)
         {
             await NotifyAsync(accountId, SecondFactorMail.Removed, FactorChange.Reset(), cancellationToken);

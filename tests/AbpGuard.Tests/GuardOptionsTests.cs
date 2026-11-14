@@ -16,6 +16,27 @@ public class GuardOptionsTests
     }
 
     [Fact]
+    public void The_admins_rule_is_off_with_48_hours_and_the_strong_categories_are_the_defaults_unless_the_operator_says()
+    {
+        GuardOptions defaults = new();
+        Assert.False(defaults.Admins.RequireStrongFactor);
+        Assert.Equal(48, defaults.Admins.GraceHours);
+        Assert.Equal(Acting.StepUpCategories.DefaultStrong.Order(), Services.GuardStepUpLevels.Read(defaults).Shown());
+
+        GuardOptions set = Bound(("Guard:Admins:RequireStrongFactor", "true"), ("Guard:Admins:GraceHours", "12"), ("Guard:StepUp:Strong", "roles,publishing"));
+        Assert.True(set.Admins.RequireStrongFactor);
+        Assert.Equal(12, set.Admins.GraceHours);
+        Assert.Equal(["publishing", "roles"], Services.GuardStepUpLevels.Read(set).Shown());
+
+        // A JSON list in appsettings reads as well as the environment's comma-separated value.
+        IConfiguration listed = new ConfigurationBuilder()
+            .AddInMemoryCollection([new("Guard:StepUp:Strong:0", "security"), new("Guard:StepUp:Strong:1", "sites")]).Build();
+        Assert.Equal(["security", "sites"], Services.GuardStepUpLevels.Read(new GuardOptions(), listed).Shown());
+        Assert.Equal(["*"], Services.GuardStepUpLevels.Read(Bound(("Guard:StepUp:Strong", "*"))).Shown());
+        Assert.Empty(Services.GuardStepUpLevels.Read(Bound(("Guard:StepUp:Strong", "none"))).Shown());
+    }
+
+    [Fact]
     public void Sign_up_starts_closed_and_the_seed_has_neutral_names_unless_the_host_says()
     {
         GuardOptions defaults = Bound();

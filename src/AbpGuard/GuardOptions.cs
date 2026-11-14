@@ -64,6 +64,28 @@ public sealed class GuardOptions
 
     /// <summary>Step-up (Guard:StepUp:*): which categories ask for a strong proof.</summary>
     public GuardStepUpOptions StepUp { get; set; } = new();
+
+    /// <summary>Site admins (Guard:Admins:*): whether each must have a strong factor, and how long they have to set one up.</summary>
+    public GuardAdminsOptions Admins { get; set; } = new();
+}
+
+/// <summary>
+/// The rule that every site admin (whoever's roles can manage everything) has a strong factor: a passkey or an
+/// authenticator app. Configuration only (environment Guard__Admins__RequireStrongFactor); no page changes it.
+/// </summary>
+public sealed class GuardAdminsOptions
+{
+    /// <summary>The environment variable that turns the rule on, as security settings name where it comes from.</summary>
+    public const string RequireStrongFactorVariable = "Guard__Admins__RequireStrongFactor";
+
+    /// <summary>Whether every site admin must have a strong factor; off by default.</summary>
+    public bool RequireStrongFactor { get; set; }
+
+    /// <summary>
+    /// How long a site admin has to set one up, counted from when Guard first sees them as one without a strong factor;
+    /// after it, signing in asks them to set one up before going on. 48 by default; 0 asks at once.
+    /// </summary>
+    public int GraceHours { get; set; } = 48;
 }
 
 /// <summary>

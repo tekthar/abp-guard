@@ -217,6 +217,28 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
         return NoContent();
     }
 
+    /// <summary>
+    /// Removes one of a person's second factors, for a lost device: one of their passkeys, or the app. Not their last while
+    /// a group of theirs or the site admins' rule asks for one (<c>last_strong_factor</c>): the reset does that. They're told.
+    /// </summary>
+    [HttpDelete("{id:guid}/second-factors/{factorId:guid}")]
+    [GuardFeature(nameof(GuardFeatures.TwoFactor))]
+    [StepUp(StepUpCategories.Security)]
+    public async Task<NoContentResult> RemoveSecondFactor(Guid id, Guid factorId, [FromServices] Services.TwoFactor.SecondFactors secondFactors,
+        CancellationToken cancellationToken)
+    {
+        if (id == CurrentAccountId)
+        {
+            throw new UserFriendlyException("Remove your own second factors from your profile.");
+        }
+
+        Casl.Ability ability = await AbilityAsync(cancellationToken);
+        Ensure(ability, "reset-second-factor", await AccountAsync(id, cancellationToken));
+        await EnsureNotAnAdminAsync(ability, id, "remove a second factor of", cancellationToken);
+        await secondFactors.RemoveAsync(id, factorId, cancellationToken, byAdmin: true);
+        return NoContent();
+    }
+
     private async Task<AccountDto> SetLockedAsync(Guid id, bool locked, CancellationToken cancellationToken)
     {
         if (locked && id == CurrentAccountId)

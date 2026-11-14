@@ -113,6 +113,14 @@ public sealed class StrongStepUpTests : IAsyncLifetime
         Assert.Contains("security", strong);
         Assert.Contains("roles", strong);
         Assert.DoesNotContain("factors", strong);
+
+        // The site admins' rule is off unless the environment turns it on: no date for anyone.
+        Assert.False(shown.RootElement.GetProperty("adminsStrongFactor").GetProperty("required").GetBoolean());
+        using JsonDocument me = JsonDocument.Parse(await admin.GetStringAsync("/api/guard/me"));
+        JsonElement strongFactor = me.RootElement.GetProperty("strongFactor");
+        Assert.True(strongFactor.GetProperty("has").GetBoolean());
+        Assert.Equal(["app"], strongFactor.GetProperty("methods").EnumerateArray().Select(m => m.GetString()!).ToArray());
+        Assert.Equal(JsonValueKind.Null, strongFactor.GetProperty("requiredBy").ValueKind);
     }
 
     [Fact]

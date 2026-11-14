@@ -198,6 +198,13 @@ public class Account : Entity<Guid>
     /// <summary>When it was erased: its name is its pseudonym, and it stays inactive for good.</summary>
     public DateTime? ErasedAt { get; set; }
 
+    /// <summary>
+    /// When a site admin must have a strong factor by (a passkey or the authenticator app), under the site admins' rule
+    /// (Guard:Admins:RequireStrongFactor): set the first time Guard sees them as one without, cleared once they have one,
+    /// restarted when an admin resets their factors. After it, signing in asks them to set one up first.
+    /// </summary>
+    public DateTime? StrongFactorDueAt { get; set; }
+
     /// <summary>A new username (an erasure's pseudonym): the old one is free for someone else, who inherits nothing.</summary>
     public void ChangeUsername(string username)
     {

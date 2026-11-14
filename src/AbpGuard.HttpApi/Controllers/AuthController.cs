@@ -81,16 +81,23 @@ public class AuthController(GuardDb guardDb, MembershipGraph graph, IGuardSiteDe
         }, requiresNew: true, cancellationToken: cancellationToken);
     }
 
+    /// <summary>
+    /// The person signed in: their account, groups, rights (CASL's rules), preferences, whose rights the request uses, and
+    /// their strong factor: whether they have one, its kinds (<c>passkey</c>, <c>app</c>), and by when the site admins' rule
+    /// asks for one (the grace starts here the first time Guard sees a site admin without one) and whether that's past.
+    /// </summary>
     [HttpGet("me")]
     [Authorize]
-    public async Task<object> Me(CancellationToken cancellationToken)
+    public async Task<object> Me([FromServices] Services.TwoFactor.AdminsStrongFactor admins, CancellationToken cancellationToken)
     {
         Casl.Ability ability = await AbilityAsync(cancellationToken);
+        Services.TwoFactor.StrongFactorDue due = await admins.CheckAsync(CurrentAccountId, ClientIp, cancellationToken);
         return await guardDb.RunAsync<object>(async db =>
     {
         Account account = await db.Accounts.FirstAsync(a => a.Id == CurrentAccountId, cancellationToken);
         Dictionary<Guid, string> directories = await db.Directories.ToDictionaryAsync(d => d.Id, d => d.Name, cancellationToken);
         List<EffectiveGroup> groups = await graph.GetEffectiveGroupsAsync(db, account, cancellationToken);
+        List<string> strong = [.. (await Services.TwoFactor.SecondFactors.KindsAsync(db, account.Id, cancellationToken)).Where(SecondFactorKinds.IsStrong)];
         return new
         {
             account = AccountDto.From(account, directories.GetValueOrDefault(account.DirectoryId, "?")),
@@ -105,6 +112,8 @@ public class AuthController(GuardDb guardDb, MembershipGraph graph, IGuardSiteDe
             preferences = Preferences(account),
             // CASL raw rules for the browser (casl-net): the UI hides what the server would refuse.
             rules = ability.ToCaslRules(),
+            // Their strong factor, and the site admins' rule's date for them.
+            strongFactor = new { has = strong.Count > 0, methods = strong, requiredBy = due.RequiredBy, overdue = due.Overdue },
         };
     }, cancellationToken: cancellationToken);
     }

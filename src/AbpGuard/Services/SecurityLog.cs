@@ -69,6 +69,14 @@ public static class SecurityAuditTypes
     public const string RecoveryCodesRenewed = "account.recovery-codes.renewed";
     public const string GroupTwoFactor = "group.two-factor";
 
+    /// <summary>
+    /// The site admins' rule (Guard:Admins:RequireStrongFactor): a site admin's grace to set up a strong factor started (or
+    /// restarted by an admin's reset), a sign-in past it sent to set one up, and the rule met once they had one.
+    /// </summary>
+    public const string StrongFactorGrace = "account.strong-factor.grace";
+    public const string StrongFactorEnrol = "auth.strong-factor.enrol";
+    public const string StrongFactorSetUp = "account.strong-factor.set-up";
+
     /// <summary>A second step's code sent by email or a channel, and which methods the site allows.</summary>
     public const string SecondFactorCodeSent = "auth.second-factor.code-sent";
     public const string SecondFactorMethods = "settings.second-factor-methods";
