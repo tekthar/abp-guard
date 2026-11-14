@@ -81,7 +81,7 @@ public static class StepUpCategories
 
     /// <summary>The categories strong unless the server's operator says otherwise (<c>Guard:StepUp:Strong</c>).</summary>
     public static readonly IReadOnlyList<string> DefaultStrong =
-        [Plugins, Roles, Security, Directories, Apps, ServiceAccounts, AdminTokens, Exports, Backups, Scripts, Secrets, Sites];
+        [Plugins, Roles, Security, Accounts, Directories, Apps, ServiceAccounts, AdminTokens, Exports, Backups, Scripts, Secrets, Sites];
 }
 
 /// <summary>

@@ -34,7 +34,8 @@ public sealed class AdminsStrongFactorTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("ConnectionStrings__Guard", $"{Server};Database={_database}");
         Environment.SetEnvironmentVariable("Guard__Seed__AdminPassword", AdminPassword);
         Environment.SetEnvironmentVariable("Guard__Messenger__PickupFolder", _mail);
-        Environment.SetEnvironmentVariable("Guard__StepUp__Strong", null);
+        // The default strong categories but `accounts`, so the set-up's admin, with no factor yet, makes its people.
+        Environment.SetEnvironmentVariable("Guard__StepUp__Strong", "plugins,roles,security,directories,apps,service-accounts,admin-tokens,exports,backups,scripts,secrets,sites");
         foreach ((string key, string value) in Rule)
         {
             Environment.SetEnvironmentVariable(key, value);

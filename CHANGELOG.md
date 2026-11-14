@@ -44,8 +44,8 @@ the columns `sessions.StrongAuthTime`, `sessions.RecoveryAuthTime` and `session_
   handoff carries the strong one to its web view.
 - **Step-up by category:** `[StepUp("roles")]`, `StepUpGuard.EnsureAsync("roles")`, and `StepUpGuard.EnsureAtAsync` for a
   level the code decides. A category is `strong` when `Guard:StepUp:Strong` (environment `Guard__StepUp__Strong`) lists
-  it: a comma-separated list, `*` for every one, or `none`; by default `plugins, roles, security, directories, apps,
-  service-accounts, admin-tokens, exports, backups, scripts, secrets, sites` (`StepUpCategories.DefaultStrong`). A strong
+  it: a comma-separated list, `*` for every one, or `none`; by default `plugins, roles, security, accounts, directories,
+  apps, service-accounts, admin-tokens, exports, backups, scripts, secrets, sites` (`StepUpCategories.DefaultStrong`). A strong
   one passes on `strong_auth_time` within the site's window, never on the password alone or with a sent or recovery code.
   `403 step_up_required`'s data gains `level`, `category` and `methods` (the person's ways, best first: `passkey`, `app`,
   `password`, `email`…); `403 strong_factor_required` (`data: { category }`) answers someone with no strong factor yet.
@@ -76,7 +76,8 @@ the columns `sessions.StrongAuthTime`, `sessions.RecoveryAuthTime` and `session_
   two-factor mode, an admin's reset or removal of someone's factors), `directories`, `apps`, `service-accounts`,
   `privacy` (exports of a person's data, erasures, holds, consent, the record of processing), `profile` (a person's own
   name and addresses), `factors`, `tokens`, and `admin-tokens` for a token a site admin makes. With the defaults, roles,
-  groups, security settings, directories, apps, service accounts and an admin's own tokens need a strong step-up.
+  groups, security settings, an admin's changes to someone's account (their password, addresses, name), directories,
+  apps, service accounts and an admin's own tokens need a strong step-up.
 - **A person's factors:** adding one needs a strong step-up once they have a strong factor (a password-level one for their
   first; a sign-in with a recovery code counts for adding alone); removing their last strong one needs a strong step-up.
   A group's `strong` mode takes a passkey as well as the app, and a sign-in's methods list `passkey` first.

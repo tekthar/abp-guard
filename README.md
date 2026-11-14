@@ -100,8 +100,8 @@ Configure it in the `Guard` section (`GuardOptions`):
   with neither can't add or use a passkey, and says what to set. Keep an old address in `Origins` after a move, or its
   passkeys stop working.
 - **Step-up levels:** `StepUp:Strong` lists the categories that need a strong proof, comma-separated, `*` for all or
-  `none`; by default `plugins, roles, security, directories, apps, service-accounts, admin-tokens, exports, backups,
-  scripts, secrets, sites`. Your own marks name their categories, `[StepUp("publishing")]`, and may be listed too. It's
+  `none`; by default `plugins, roles, security, accounts, directories, apps, service-accounts, admin-tokens, exports,
+  backups, scripts, secrets, sites`. Your own marks name their categories, `[StepUp("publishing")]`, and may be listed too. It's
   the server operator's (environment `Guard__StepUp__Strong`): no page changes it.
 - **Site admins:** `Admins:RequireStrongFactor` (off by default; environment `Guard__Admins__RequireStrongFactor`) makes
   every site admin have a passkey or an authenticator app, within `Admins:GraceHours` (48) of when Guard first sees them

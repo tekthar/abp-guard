@@ -64,15 +64,24 @@ public class StepUpLevelTests
     private static async Task<UserFriendlyException> RefusedAsync(Func<Task> step) => await Assert.ThrowsAsync<UserFriendlyException>(step);
 
     [Fact]
+    public void An_admins_changes_to_someones_account_are_strong_by_default()
+    {
+        // Resetting someone's password or address is how an account is taken over (the user's decision, 14 Nov).
+        Assert.Contains(StepUpCategories.Accounts, StepUpCategories.DefaultStrong);
+        Assert.True(StepUpStrongCategories.Default.Includes(StepUpCategories.Accounts));
+        Assert.False(StepUpStrongCategories.Default.Includes(StepUpCategories.Privacy));
+    }
+
+    [Fact]
     public async Task A_password_level_mark_passes_on_a_recent_sign_in_or_step_up()
     {
-        await Guard(proved: TimeSpan.FromMinutes(3)).EnsureAsync(StepUpCategories.Accounts);
+        await Guard(proved: TimeSpan.FromMinutes(3)).EnsureAsync(StepUpCategories.Privacy);
         await Guard(proved: TimeSpan.FromMinutes(3)).EnsureAsync();
 
-        UserFriendlyException refused = await RefusedAsync(() => Guard(proved: TimeSpan.FromMinutes(30)).EnsureAsync(StepUpCategories.Accounts));
+        UserFriendlyException refused = await RefusedAsync(() => Guard(proved: TimeSpan.FromMinutes(30)).EnsureAsync(StepUpCategories.Privacy));
         Assert.Equal(GuardErrorCodes.StepUpRequired, refused.Code);
         Assert.Equal(StepUpLevels.Password, refused.Data["level"]);
-        Assert.Equal(StepUpCategories.Accounts, refused.Data["category"]);
+        Assert.Equal(StepUpCategories.Privacy, refused.Data["category"]);
         Assert.Equal(["passkey", "password"], (string[])refused.Data["methods"]!);
         Assert.Equal(600, refused.Data["maxAgeSeconds"]);
     }
