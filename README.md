@@ -121,7 +121,10 @@ server needs the same certificate with its private key.
 A host can replace each of Guard's seams with its own service: `IGuardMessenger`, `IGuardLocks`, `IGuardRateLimits`,
 `IGuardEventSink`, `IGuardBroadcast`, `IGuardSiteDefaults`, `ISignUpChallenges`, `ITokenRestrictions`,
 `ISecurityFeedSender` and `IStepUpTokenPolicy` (which personal access tokens may pass a step-up mark, by its category; none
-by default). Otherwise Guard uses its defaults.
+by default). Otherwise Guard uses its defaults. ABP registers a class under an interface only when the class's name
+ends with the interface's (`MarketplaceStepUpTokenPolicy` for `IStepUpTokenPolicy`); one named otherwise needs
+`[ExposeServices(typeof(IStepUpTokenPolicy))]` with `[Dependency(ReplaceServices = true)]`, or
+`services.Replace(ServiceDescriptor.Transient<IStepUpTokenPolicy, MyPolicy>())`, or Guard's default stays in its place.
 
 **Behind a proxy or load balancer**, tell ASP.NET Core which proxies to trust, before Guard's middleware, so Guard sees
 each person's own address and scheme. Sign-in limits count wrong passwords per IP address; without this, every request
