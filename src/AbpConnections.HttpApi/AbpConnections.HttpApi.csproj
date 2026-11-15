@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>AbpConnections.HttpApi: connections over HTTP under api/connections. Kinds, a scope's connections (made, changed, tested, removed; secrets set behind a step-up), OAuth sign-in with PKCE and its return, sign-out, and each person's own sign-ins. Who may manage a scope's connections is the application's (IConnectionRights): site admins and the site's by default.</Description>
+    <PackageTags>abp;connections;oauth;pkce;api</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Volo.Abp.AspNetCore.Mvc" Version="$(AbpVersion)" />
+    <ProjectReference Include="..\AbpConnections\AbpConnections.csproj" />
+  </ItemGroup>
+
+</Project>

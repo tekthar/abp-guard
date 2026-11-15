@@ -6,6 +6,32 @@ change the API.
 
 ## [Unreleased]
 
+Two new packages, `AbpConnections` and `AbpConnections.HttpApi`: connections to outside systems, which an application
+had to write itself. AbpGuard's own packages don't change. Nothing to migrate in Guard's database; a host that adds
+connections makes their two tables in its own migrations.
+
+### Added
+
+- **`AbpConnections`**, connections to outside systems for any ABP application, with or without the rest of Guard:
+  - The model for the host's own context (`IConnectionsDbContext`, `ConfigureConnections(schema, scopeColumn)`): the
+    tables `connections` and `connection_accounts`, a connection at site scope or in one of the host's scopes.
+  - `ConnectionManager`: made, changed, tested and removed; secrets encrypted with Data Protection
+    (`ConnectionsOptions.SecretsPurpose`), never shown again, and a blank secret keeps the stored one; OAuth 2.0 sign-in
+    with the authorization code and PKCE, its state only its starter can finish within `SignInTime`; once for everyone
+    or by each person with their own account (`EachPerson`, `ForPersonAsync`, `PersonNotSignedInException`); an access
+    token refreshed one at a time for each connection on every server, a refused refresh ending the sign-in and an
+    unanswered one keeping it.
+  - The seams: `IConnectionKind` (and `IConnectionSignInPreparer` for one that must find out how to sign in, such as an
+    MCP server), `IConnectionKinds` for kinds that come and go, `IConnectionUses`, `IConnectionLocks` (ABP's
+    distributed lock by default), and `ISecurityAudit` (Guard's security log with `AbpGuardModule`; nothing otherwise).
+  - The outbound guard: `RefusePrivateAddresses()` on any HTTP client refuses private and loopback addresses unless
+    `Network:AllowedPrivateHosts` lists them, and only the hosts in `Network:AllowedHosts` when it lists any;
+    `OutboundGuard.Caller` names the application in the refusal. The `Connections` client has it.
+- **`AbpConnections.HttpApi`**, `api/connections`: the kinds, a scope's connections (`?scopeId=`), a test, sign-in and
+  its return (`complete`), sign-out, and each person's own sign-ins (`mine`). Setting a secret and removing a connection
+  take a `secrets` step-up. Who manages a scope's connections is `IConnectionRights`: by default, site admins manage the
+  site's.
+
 ## [0.7.1] - 2026-11-14
 
 An authenticator app's code alone is a strong step-up, as the operator may choose. No migration.

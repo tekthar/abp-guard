@@ -15,6 +15,16 @@ together, but it isn't split into ABP's standard module layers. This page maps o
 | `*.Web` / `*.Blazor` | `@abpjs/guard` (planned), released with the packages |
 | Request-time helpers | `AbpGuard.Acting`: `ActingContext` (who is acting, and as what), `[StepUp("category")]` (the password again, or a passkey or the app for a strong category), read-only requests |
 
+Connections (`AbpConnections`, since 0.8.0) are a module whose tables live in the host's own context:
+
+| ABP's layer | In AbpConnections |
+|---|---|
+| `*.Domain.Shared` | `AbpConnections`: `ConnectionStatus`, `ConnectionAuditTypes`, `ConnectionsOptions` |
+| `*.Domain` | `AbpConnections`: `Connection`, `ConnectionAccount`, and `ConnectionManager` (its domain service) |
+| `*.Application.Contracts` | `AbpConnections`: the views (`ConnectionView`, `ConnectionChange`…) and the seams (`IConnectionKind`, `IConnectionKinds`, `IConnectionUses`, `IConnectionLocks`) |
+| `*.EntityFrameworkCore` | `AbpConnections`: `IConnectionsDbContext` and `ConfigureConnections`, for the host's context (`ReplaceDbContext`) and its migrations |
+| `*.HttpApi` | `AbpConnections.HttpApi`: `ConnectionsController` under `api/connections`, and `IConnectionRights` |
+
 ## What works the ABP way
 
 - **Modules:** `AbpGuardModule`, `AbpGuardHttpApiModule` and `AbpGuardActingModule`, with `[DependsOn]` on ABP's own

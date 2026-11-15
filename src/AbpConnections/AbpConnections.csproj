@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>AbpConnections: connections to outside systems for an ABP app on .NET 10 and EF Core. Kinds with their settings and secrets (encrypted with Data Protection, never shown again), OAuth 2.0 sign-in with PKCE once for everyone or by each person with their own account, tokens refreshed one at a time on any server, a test call, the security audit; and the outbound guard: no private or loopback address unless the operator allows it, only the hosts the site allows.</Description>
+    <PackageTags>abp;connections;oauth;pkce;secrets;data-protection;ssrf;outbound;efcore</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Volo.Abp.EntityFrameworkCore" Version="$(AbpVersion)" />
+    <PackageReference Include="Volo.Abp.DistributedLocking.Abstractions" Version="$(AbpVersion)" />
+    <ProjectReference Include="..\AbpGuard.Acting\AbpGuard.Acting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AbpConnections.Tests" />
+  </ItemGroup>
+
+</Project>

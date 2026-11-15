@@ -31,6 +31,9 @@ instead of writing its own security. Nothing in it assumes one product: every na
   notice with consent.
 - **The security log**, kept for a set number of days, downloaded as CSV or fed to a receiver as it's written, with
   alerts to site admins of what may be a breach.
+- **Connections to outside systems** (`AbpConnections`, since 0.8.0): settings and secrets kept encrypted, OAuth sign-in
+  with PKCE once for everyone or by each person with their own account, tokens refreshed one at a time on any server, and
+  an outbound guard that refuses private addresses. It works without the rest of Guard.
 
 Guard keeps its tables in the `guard` schema of the host's database, or in a database of its own.
 
@@ -44,6 +47,8 @@ On [nuget.org](https://www.nuget.org/packages?q=AbpGuard):
 | `AbpGuard.Acting` | The acting context (whose rights a request uses and who acts), step-up, read-only requests, error codes, the names Guard writes. |
 | `AbpGuard` | The ABP module: domain, services, the EF Core contexts and their migrations, the seams. |
 | `AbpGuard.HttpApi` | The API (since 0.5.0): sign-in and sessions, OpenIddict's `/connect/*`, and `api/guard/*`; `AbpGuardHttpApiModule` brings `AbpGuardModule`. |
+| `AbpConnections` | Connections to outside systems (since 0.8.0): the tables' model for the host's own context, `ConnectionManager`, the kinds' interfaces, and the outbound guard. |
+| `AbpConnections.HttpApi` | Connections over HTTP under `api/connections` (since 0.8.0); `AbpConnectionsHttpApiModule` brings `AbpConnectionsModule`. |
 
 Coming from ABP's module template? [Where ABP's layers are in this repository](docs/abp-layers.md).
 
@@ -146,6 +151,68 @@ app.UseForwardedHeaders();
 
 **A host that ran the earlier packages** keeps its sessions, tokens and protected data by setting the names it shipped
 with: see [docs/upgrading.md](docs/upgrading.md).
+
+## Connections
+
+`AbpConnections` keeps what an application needs to reach outside systems for its people: a drive, a mailbox, a
+repository host, an MCP server. A connection has a kind (`IConnectionKind`: its settings, how it signs in with OAuth, and
+a test call), its settings, and its secrets, which are encrypted and never shown again. It needs only ABP, EF Core and
+Data Protection, not the rest of Guard.
+
+```csharp
+[DependsOn(typeof(AbpConnectionsHttpApiModule))]   // or AbpConnectionsModule, for the services without the API
+public class MyHostModule : AbpModule
+{
+    public override void ConfigureServices(ServiceConfigurationContext context)
+    {
+        context.Services.AddAbpDbContext<MyDbContext>(o => o.ReplaceDbContext<IConnectionsDbContext>());
+        context.Services.AddSingleton<IConnectionKind, MyDriveKind>();
+        Configure<ConnectionsOptions>(o => o.WherePeopleSignIn = "Profile > Connected accounts");
+    }
+}
+
+public class MyDbContext(DbContextOptions<MyDbContext> options) : AbpDbContext<MyDbContext>(options), IConnectionsDbContext
+{
+    public DbSet<Connection> Connections => Set<Connection>();
+    public DbSet<ConnectionAccount> ConnectionAccounts => Set<ConnectionAccount>();
+
+    protected override void OnModelCreating(ModelBuilder builder)
+    {
+        base.OnModelCreating(builder);
+        builder.ConfigureConnections("my_schema");   // the tables connections and connection_accounts, in your migrations
+    }
+}
+```
+
+- **Scopes:** a connection belongs to the site (no scope) or to one scope of yours, such as a project. `ScopeId` is
+  the column `ScopeId` unless `ConfigureConnections` names another.
+- **Secrets and tokens** are protected with Data Protection under `ConnectionsOptions.SecretsPurpose`
+  (`AbpConnections.Secrets.v1`). Every server needs the same key ring (`AddGuardKeyRing`, or your own). Never change the
+  purpose once a secret is saved: every saved secret is lost with it.
+- **Signing in** is OAuth's authorization code with PKCE. `POST api/connections/{id}/authorize` gives the provider's
+  address. The provider sends the browser back to your page ending in `CallbackPath` (`/connections/callback`), which
+  posts the code and state to `POST api/connections/complete`. Only the person who started a sign-in can finish it,
+  within `SignInTime` (10 minutes).
+- **Each person their own account:** a connection made with `EachPerson` has every person sign in themselves, under
+  `api/connections/mine`. `ConnectionManager.ForPersonAsync` gives that person's token, or throws
+  `PersonNotSignedInException` saying where to sign in (`WherePeopleSignIn`).
+- **Using one:** `GetForUseAsync` gives the settings, the secrets and an access token, refreshed first when it's about to
+  expire. A refresh runs one at a time for each connection on every server (`IConnectionLocks`, ABP's distributed lock
+  by default: give ABP a distributed lock provider when you run more than one server). If the provider refuses a refresh,
+  the connection must sign in again. If the provider doesn't answer, the tokens stay.
+- **Kinds that come and go**, such as a plugin's, come from your own `IConnectionKinds`. It leases them while they're used
+  and keys each one (`plugin:type`, say). By default, every `IConnectionKind` registered is offered under its `Type`.
+- **What uses a connection** (`IConnectionUses`): it can't be removed while anything does, and the refusal names the
+  users.
+- **Who may manage** a scope's connections is `IConnectionRights`. By default, site admins (`GuardPolicies.Admin`, which
+  `AbpGuardModule` defines) manage the site's, and a scope's need your own rights. Setting a secret and removing a
+  connection take a step-up in the `secrets` category, strong by default.
+- **The audit:** `ISecurityAudit` hears every change, by name and never with a secret. With `AbpGuardModule` it goes to
+  Guard's security log, and without it nowhere, unless you register your own.
+- **The outbound guard:** the `Connections` HTTP client refuses private and loopback addresses, unless
+  `Network:AllowedPrivateHosts` lists the host. When `Network:AllowedHosts` lists any hosts, it reaches only those
+  (`*.example.com` matches subdomains). Give your own clients the same rules with `.RefusePrivateAddresses()`. The
+  refusal names `OutboundGuard.Caller` ("this server" by default).
 
 ## Build and test
 
