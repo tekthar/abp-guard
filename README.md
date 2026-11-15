@@ -205,8 +205,14 @@ public class MyDbContext(DbContextOptions<MyDbContext> options) : AbpDbContext<M
 - **What uses a connection** (`IConnectionUses`): it can't be removed while anything does, and the refusal names the
   users.
 - **Who may manage** a scope's connections is `IConnectionRights`. By default, site admins (`GuardPolicies.Admin`, which
-  `AbpGuardModule` defines) manage the site's, and a scope's need your own rights. Setting a secret and removing a
-  connection take a step-up in the `secrets` category, strong by default.
+  `AbpGuardModule` defines) manage the site's, and a scope's need your own rights. Without `AbpGuardModule`, no one
+  manages them until you register your own, and the API refuses with a 403 that says so.
+- **The step-up** (the `secrets` category, strong by default) guards whatever could hand a secret or a sign-in to someone
+  else: setting a secret, changing any setting of a connection that holds a secret or a sign-in (a new address would
+  receive them on the next test or refresh; `ChangeNeedsStepUpAsync` tells), signing one in for everyone, and removing
+  one. Signing in with one's own account needs none.
+- **A new provider ends the sign-in:** when a change moves where a connection signs in (the provider's addresses, the
+  client, the resource), its tokens and every person's own end with it, and it signs in again. Other settings keep them.
 - **The audit:** `ISecurityAudit` hears every change, by name and never with a secret. With `AbpGuardModule` it goes to
   Guard's security log, and without it nowhere, unless you register your own.
 - **The outbound guard:** the `Connections` HTTP client refuses private and loopback addresses, unless

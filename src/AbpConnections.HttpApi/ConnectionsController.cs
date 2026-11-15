@@ -19,8 +19,9 @@ public sealed record ConnectionCompleteInput(string Code, string State);
 
 /// <summary>
 /// Connections over HTTP. A scope's (<c>?scopeId=</c>, the site's without one) are managed by whoever
-/// <see cref="IConnectionRights"/> allows; setting a secret, and removing a connection, take a step-up
-/// (<see cref="StepUpCategories.Secrets"/>). Each person's own sign-ins are under <c>mine</c>.
+/// <see cref="IConnectionRights"/> allows. Setting a secret, changing the settings of a connection that holds a secret or
+/// a sign-in, signing one in for everyone, and removing one take a step-up (<see cref="StepUpCategories.Secrets"/>).
+/// Each person's own sign-ins are under <c>mine</c>.
 /// </summary>
 [Route("api/connections")]
 [Authorize]
@@ -67,7 +68,7 @@ public class ConnectionsController(ConnectionManager manager, IConnectionRights 
     public async Task<ConnectionView> Update(Guid id, [FromBody] ConnectionChange change, [FromQuery] Guid? scopeId, CancellationToken cancellationToken)
     {
         await rights.EnsureMayManageAsync(scopeId, cancellationToken);
-        if (ConnectionManager.SetsSecrets(change))
+        if (await manager.ChangeNeedsStepUpAsync(id, scopeId, change, cancellationToken))
         {
             await stepUp.EnsureAsync(StepUpCategories.Secrets, cancellationToken);
         }
@@ -90,8 +91,12 @@ public class ConnectionsController(ConnectionManager manager, IConnectionRights 
         return await manager.TestAsync(id, scopeId, cancellationToken, Me);
     }
 
-    /// <summary>Where to send the browser to sign a connection in for everyone.</summary>
+    /// <summary>
+    /// Where to send the browser to sign a connection in for everyone. It replaces the account everyone's calls go
+    /// through, so it takes a step-up, as setting a secret does; signing in with one's own account doesn't.
+    /// </summary>
     [HttpPost("{id:guid}/authorize")]
+    [StepUp(StepUpCategories.Secrets)]
     public async Task<ConnectionAuthorizeAnswer> Authorize(Guid id, [FromBody] ConnectionAuthorizeInput input, [FromQuery] Guid? scopeId, CancellationToken cancellationToken)
     {
         await rights.EnsureMayManageAsync(scopeId, cancellationToken);

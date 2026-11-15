@@ -92,6 +92,39 @@ public class ConnectionManager(
     /// <summary>Whether saving this sets or replaces a stored secret: a host may ask the person to prove it's them first.</summary>
     public static bool SetsSecrets(ConnectionChange change) => change.Secrets?.Values.Any(v => !string.IsNullOrEmpty(v)) == true;
 
+    /// <summary>
+    /// Whether saving this change to a connection needs the person to prove it's them first: it sets a secret, or it
+    /// changes a setting of a connection that holds a secret or a sign-in. A new address would send what it holds there,
+    /// on its next test or refresh.
+    /// </summary>
+    public async Task<bool> ChangeNeedsStepUpAsync(Guid id, Guid? scopeId, ConnectionChange change, CancellationToken cancellationToken)
+    {
+        if (SetsSecrets(change))
+        {
+            return true;
+        }
+
+        (Connection connection, bool peopleSignedIn) = await RunAsync(async db =>
+        {
+            Connection connection = await db.Connections.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id && c.ScopeId == scopeId, cancellationToken)
+                ?? throw new EntityNotFoundException(typeof(Connection), id);
+            return (connection, await db.ConnectionAccounts.AnyAsync(a => a.ConnectionId == id, cancellationToken));
+        }, cancellationToken);
+        if (connection.ProtectedSecrets is null && connection.ProtectedTokens is null && connection.ProtectedSignIn is null && !peopleSignedIn)
+        {
+            return false;
+        }
+
+        await using IConnectionKindsLease lease = await kinds.LeaseAsync(cancellationToken);
+        if (Find(lease, connection.Type) is not { } kind)
+        {
+            return true; // which of its settings matter can't be told: ask
+        }
+
+        Dictionary<string, string> stored = SettingsOf(connection), wanted = PlainSettings(kind, change);
+        return stored.Count != wanted.Count || wanted.Any(kv => stored.GetValueOrDefault(kv.Key) != kv.Value);
+    }
+
     public async Task<ConnectionView> CreateAsync(ConnectionChange change, Guid? scopeId, Guid createdBy, CancellationToken cancellationToken)
     {
         await using IConnectionKindsLease lease = await kinds.LeaseAsync(cancellationToken);
@@ -128,11 +161,26 @@ public class ConnectionManager(
             IConnectionKind kind = Find(lease, connection.Type) ?? throw new UserFriendlyException($"The '{connection.Type}' connection type isn't available.{O.MissingTypeHint}");
             string oldName = connection.Name;
             connection.Name = RequireName(change.Name);
+            string? signedInAt = kind.SignsIn ? SignInPlace(connection, kind) : null;
             (List<string> secretsReplaced, Dictionary<string, (string? Before, string? After)> settingsChanged) = Apply(connection, kind, change);
+            bool? signedOut = null;
             if (settingsChanged.Count > 0 || secretsReplaced.Count > 0)
             {
                 // Where it signs in, and as which client, is found again for the settings it has now.
                 connection.ProtectedSignIn = null;
+
+                // Tokens are good only with the provider and client that gave them: a change that signs in elsewhere ends
+                // every sign-in it had, so none is refreshed against another provider.
+                if (kind.SignsIn && (kind is IConnectionSignInPreparer || SignInPlace(connection, kind) != signedInAt)
+                    && (connection.ProtectedTokens is not null || await db.ConnectionAccounts.AnyAsync(a => a.ConnectionId == id, cancellationToken)))
+                {
+                    connection.ProtectedTokens = null;
+                    connection.Account = null;
+                    connection.ConnectedAt = null;
+                    connection.Status = connection.EachPerson ? connection.Status : ConnectionStatus.NeedsSignIn;
+                    await db.ConnectionAccounts.Where(a => a.ConnectionId == id).ExecuteDeleteAsync(cancellationToken);
+                    signedOut = true;
+                }
             }
 
             bool? eachPersonChanged = null;
@@ -156,6 +204,7 @@ public class ConnectionManager(
                 settings = settingsChanged.ToDictionary(kv => kv.Key, kv => new { before = kv.Value.Before, after = kv.Value.After }),
                 secrets = secretsReplaced,
                 eachPerson = eachPersonChanged,
+                signedOut,
             };
             return (connection, kind, details);
         }, cancellationToken);
@@ -772,6 +821,29 @@ public class ConnectionManager(
     {
         await using IConnectionKindsLease lease = await kinds.LeaseAsync(cancellationToken);
         IConnectionKind kind = Find(lease, connection.Type) ?? throw new UserFriendlyException($"The '{connection.Type}' connection type isn't available.");
+        return OAuthOf(connection, kind);
+    }
+
+    /// <summary>
+    /// Where a connection signs in, and as which client: the provider's addresses, the client and the resource. Another
+    /// place means its tokens aren't good there. One that can't be told is a place of its own.
+    /// </summary>
+    private string SignInPlace(Connection connection, IConnectionKind kind)
+    {
+        try
+        {
+            return OAuthOf(connection, kind) is { } oauth
+                ? string.Join('\n', oauth.AuthorizeUrl, oauth.TokenUrl, oauth.ClientId, oauth.Extra?.GetValueOrDefault("resource") ?? "")
+                : "";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return Guid.NewGuid().ToString();
+        }
+    }
+
+    private ConnectionOAuthSetup? OAuthOf(Connection connection, IConnectionKind kind)
+    {
         Dictionary<string, string> settings = SettingsOf(connection), secrets = SecretsOf(connection);
         // What its sign-in found (an MCP server's endpoints and the client registered there), under "_" names.
         foreach ((string name, string value) in FoundOf(connection))
@@ -809,8 +881,7 @@ public class ConnectionManager(
             }
             else
             {
-                string? value = change.Settings?.GetValueOrDefault(definition.Name)?.Trim();
-                value = string.IsNullOrEmpty(value) ? definition.DefaultValue : value;
+                string? value = SettingValue(definition, change);
                 if (!string.IsNullOrEmpty(value))
                 {
                     settings[definition.Name] = value;
@@ -831,6 +902,18 @@ public class ConnectionManager(
             .ToDictionary(k => k, k => ((string?)storedSettings.GetValueOrDefault(k), (string?)settings.GetValueOrDefault(k)));
         return (secretsChanged, settingsChanged);
     }
+
+    /// <summary>A plain setting as a change gives it: trimmed, or the kind's default when it's blank.</summary>
+    private static string? SettingValue(ConnectionSetting definition, ConnectionChange change)
+    {
+        string? value = change.Settings?.GetValueOrDefault(definition.Name)?.Trim();
+        return string.IsNullOrEmpty(value) ? definition.DefaultValue : value;
+    }
+
+    /// <summary>The plain settings a change would keep, as <see cref="Apply"/> keeps them.</summary>
+    private static Dictionary<string, string> PlainSettings(IConnectionKind kind, ConnectionChange change) =>
+        kind.Settings.Where(d => !d.Secret).Select(d => (d.Name, Value: SettingValue(d, change))).Where(s => !string.IsNullOrEmpty(s.Value))
+            .ToDictionary(s => s.Name, s => s.Value!);
 
     private async Task<ConnectionView> ViewAsync(Connection c, IConnectionKind? kind, CancellationToken cancellationToken)
     {

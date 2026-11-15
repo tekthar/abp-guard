@@ -28,9 +28,21 @@ connections makes their two tables in its own migrations.
     `Network:AllowedPrivateHosts` lists them, and only the hosts in `Network:AllowedHosts` when it lists any;
     `OutboundGuard.Caller` names the application in the refusal. The `Connections` client has it.
 - **`AbpConnections.HttpApi`**, `api/connections`: the kinds, a scope's connections (`?scopeId=`), a test, sign-in and
-  its return (`complete`), sign-out, and each person's own sign-ins (`mine`). Setting a secret and removing a connection
-  take a `secrets` step-up. Who manages a scope's connections is `IConnectionRights`: by default, site admins manage the
-  site's.
+  its return (`complete`), sign-out, and each person's own sign-ins (`mine`). Who manages a scope's connections is
+  `IConnectionRights`: by default, site admins manage the site's; without `AbpGuardModule`'s admins policy, no one does
+  until the host registers its own (a 403 that says so, not a 500).
+
+### Security
+
+- **The `secrets` step-up covers everything that could hand a secret or a sign-in to someone else**, not only setting a
+  secret. Changing any setting of a connection that holds a secret or a sign-in takes it, since a new address would
+  receive the stored key or tokens on the next test or refresh (`ConnectionManager.ChangeNeedsStepUpAsync`). Signing a
+  connection in for everyone takes it too, since that replaces the account everyone's calls go through, and so does
+  removing one. An application that kept its own copy of this code and asked the step-up only when a secret was set
+  should ask it as the API here does.
+- **A change that moves where a connection signs in ends its sign-ins:** another provider address, client or resource
+  clears its tokens and every person's own, so no refresh token goes to another provider. A kind that finds out how to
+  sign in (`IConnectionSignInPreparer`) signs in again after any change to its settings or secrets.
 
 ## [0.7.1] - 2026-11-14
 

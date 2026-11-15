@@ -58,7 +58,7 @@ public class ManagerTests
 
         string url = await app.Manager.AuthorizeAsync(made.Id, null, "https://app.test/connections/callback", Admin, default);
         Dictionary<string, string> query = Query(url);
-        Assert.StartsWith("https://provider.test/authorize?", url);
+        Assert.StartsWith("https://provider.test/common/authorize?", url);
         Assert.Equal(("code", "client-1", "S256", "files"), (query["response_type"], query["client_id"], query["code_challenge_method"], query["scope"]));
         await Assert.ThrowsAsync<UserFriendlyException>(() => app.Manager.AuthorizeAsync(made.Id, null, "https://app.test/elsewhere", Admin, default));
 
@@ -133,6 +133,50 @@ public class ManagerTests
         Assert.Empty(await app.Manager.ListAsync(null, default));
     }
 
+    [Fact]
+    public async Task A_settings_change_asks_a_step_up_when_the_connection_holds_a_secret_or_a_sign_in()
+    {
+        await using ConnectionsApp app = await ConnectionsApp.StartAsync();
+        ConnectionView key = await app.Manager.CreateAsync(new("Reports", "api-key", new() { ["url"] = "https://api.example.com" }, new() { ["key"] = "k-123" }), null, Admin, default);
+        // A new address would send the stored key there on the next test.
+        Assert.True(await app.Manager.ChangeNeedsStepUpAsync(key.Id, null, new("Reports", "api-key", new() { ["url"] = "https://elsewhere.example" }, null), default));
+        Assert.True(await app.Manager.ChangeNeedsStepUpAsync(key.Id, null, new("Reports", "api-key", new() { ["url"] = "https://api.example.com" }, new() { ["key"] = "k-456" }), default));
+        Assert.False(await app.Manager.ChangeNeedsStepUpAsync(key.Id, null, new("Renamed", "api-key", new() { ["url"] = " https://api.example.com " }, new() { ["key"] = "" }), default));
+
+        ConnectionView drive = await app.Manager.CreateAsync(new("Drive", "oauth", null, null), null, Admin, default);
+        ConnectionChange folder = new("Drive", "oauth", new() { ["folder"] = "/reports" }, null);
+        Assert.False(await app.Manager.ChangeNeedsStepUpAsync(drive.Id, null, folder, default)); // it holds nothing yet
+        Guid signedIn = await app.SignedInAsync();
+        Assert.True(await app.Manager.ChangeNeedsStepUpAsync(signedIn, null, folder, default));
+        Assert.False(await app.Manager.ChangeNeedsStepUpAsync(signedIn, null, new("Drive 2", "oauth", new() { ["tenant"] = "common" }, null), default)); // the default, as kept
+
+        await Assert.ThrowsAsync<EntityNotFoundException>(() => app.Manager.ChangeNeedsStepUpAsync(key.Id, Guid.NewGuid(), folder, default));
+    }
+
+    [Fact]
+    public async Task Signing_in_somewhere_else_ends_every_sign_in_and_another_setting_keeps_them()
+    {
+        await using ConnectionsApp app = await ConnectionsApp.StartAsync();
+        Guid id = await app.SignedInAsync();
+        ConnectionView kept = await app.Manager.UpdateAsync(id, new("Drive", "oauth", new() { ["folder"] = "/reports" }, null), null, default);
+        Assert.Equal((true, ConnectionStatus.Ready), (kept.SignedIn, kept.Status));
+
+        ConnectionView moved = await app.Manager.UpdateAsync(id, new("Drive", "oauth", new() { ["tenant"] = "elsewhere", ["folder"] = "/reports" }, null), null, default);
+        Assert.Equal((false, ConnectionStatus.NeedsSignIn, null), (moved.SignedIn, moved.Status, moved.Account));
+        Assert.Null((await app.Manager.GetForUseAsync(id, default))!.AccessToken);
+        Assert.DoesNotContain(app.Provider.Requests, r => r.Url.Contains("/elsewhere/"));
+        Assert.Contains("\"signedOut\":true", JsonSerializer.Serialize(app.Audit.Entries.Last(e => e.Type == ConnectionAuditTypes.Updated).Detail));
+
+        // Each person's own sign-ins end too, and the connection stays ready for them to sign in again.
+        ConnectionView mail = await app.Manager.CreateAsync(new("Mail", "oauth", null, null, EachPerson: true), null, Admin, default);
+        Guid dana = Guid.NewGuid();
+        string url = await app.Manager.AuthorizeAsync(mail.Id, null, "https://app.test/connections/callback", dana, default, personal: true);
+        await app.Manager.CompleteAsync("code-1", Query(url)["state"], dana, default);
+        ConnectionView mailMoved = await app.Manager.UpdateAsync(mail.Id, new("Mail", "oauth", new() { ["tenant"] = "elsewhere" }, null), null, default);
+        Assert.Equal((ConnectionStatus.Ready, 0), (mailMoved.Status, mailMoved.PeopleSignedIn));
+        Assert.False((await app.Manager.PersonalListAsync(dana, [], default)).Single().SignedIn);
+    }
+
     private static Dictionary<string, string> Query(string url) =>
         new Uri(url).Query.TrimStart('?').Split('&').Select(p => p.Split('=', 2)).ToDictionary(p => Uri.UnescapeDataString(p[0]), p => Uri.UnescapeDataString(p[1]));
 
@@ -140,16 +184,16 @@ public class ManagerTests
         Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(Encoding.ASCII.GetBytes(verifier))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }
 
-/// <summary>A kind that signs in with OAuth at the fake provider.</summary>
+/// <summary>A kind that signs in with OAuth at the fake provider: the tenant says where, the folder is only its own.</summary>
 public sealed class OAuthKind : IConnectionKind
 {
     public string Type => "oauth";
     public string DisplayName => "Drive";
-    public IReadOnlyList<ConnectionSetting> Settings => [];
+    public IReadOnlyList<ConnectionSetting> Settings => [new("tenant", "Tenant", DefaultValue: "common"), new("folder", "Folder")];
     public bool SignsIn => true;
 
     public ConnectionOAuthSetup? OAuth(IReadOnlyDictionary<string, string> settings, IReadOnlyDictionary<string, string> secrets) =>
-        new("https://provider.test/authorize", "https://provider.test/token", ["files"], "client-1", "secret-1");
+        new($"https://provider.test/{settings["tenant"]}/authorize", $"https://provider.test/{settings["tenant"]}/token", ["files"], "client-1", "secret-1");
 
     public Task<ConnectionTestResult> TestAsync(ConnectionInUse connection, HttpClient http, CancellationToken cancellationToken) =>
         Task.FromResult(new ConnectionTestResult(connection.AccessToken is not null, connection.AccessToken is null ? "No token." : "It answered.", "dana@example.com"));

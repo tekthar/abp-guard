@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AbpConnections\AbpConnections.csproj" />
+    <ProjectReference Include="..\..\src\AbpConnections.HttpApi\AbpConnections.HttpApi.csproj" />
   </ItemGroup>
 
 </Project>

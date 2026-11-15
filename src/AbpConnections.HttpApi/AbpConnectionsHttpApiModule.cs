@@ -35,8 +35,13 @@ public interface IConnectionRights
     Task<IReadOnlyCollection<Guid>> ScopesOfAsync(Guid accountId, CancellationToken cancellationToken);
 }
 
-/// <summary>The default: site admins manage the site's connections; a scope's need the host's own rights.</summary>
-public sealed class AdminConnectionRights(IAuthorizationService authorization, Microsoft.AspNetCore.Http.IHttpContextAccessor http) : IConnectionRights
+/// <summary>
+/// The default: site admins (<see cref="GuardPolicies.Admin"/>) manage the site's connections; a scope's need the host's
+/// own rights. Without that policy (an application without <c>AbpGuardModule</c>), no one does until the host registers
+/// its own <see cref="IConnectionRights"/>.
+/// </summary>
+public sealed class AdminConnectionRights(
+    IAuthorizationService authorization, IAuthorizationPolicyProvider policies, Microsoft.AspNetCore.Http.IHttpContextAccessor http) : IConnectionRights
 {
     public async Task EnsureMayManageAsync(Guid? scopeId, CancellationToken cancellationToken)
     {
@@ -45,7 +50,14 @@ public sealed class AdminConnectionRights(IAuthorizationService authorization, M
             throw new UserFriendlyException("This application doesn't manage a scope's connections here.", GuardErrorCodes.Forbidden);
         }
 
-        if (http.HttpContext?.User is not { } user || !(await authorization.AuthorizeAsync(user, GuardPolicies.Admin)).Succeeded)
+        if (await policies.GetPolicyAsync(GuardPolicies.Admin) is not { } admins)
+        {
+            throw new UserFriendlyException(
+                "No one manages connections here yet: the application registers an IConnectionRights, or uses AbpGuard for its site admins.",
+                GuardErrorCodes.Forbidden);
+        }
+
+        if (http.HttpContext?.User is not { } user || !(await authorization.AuthorizeAsync(user, admins)).Succeeded)
         {
             throw new UserFriendlyException("Only a site admin manages the site's connections.", GuardErrorCodes.Forbidden);
         }
