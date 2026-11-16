@@ -7,8 +7,10 @@ namespace AbpGuard.Host.Tests;
 
 /// <summary>
 /// Guard's API document, kept in docs/openapi/abpguard.json: what a host's screens generate their types from (@abpjs/ui's
-/// guard area). The sample serves it at /openapi/abpguard.json; this fails when the kept copy differs, as it does after
-/// any change to the API or the version, and ABP_GUARD_UPDATE_OPENAPI=1 writes it instead.
+/// guard area). The sample serves it at /openapi/abpguard.json, here with every feature on (the sample alone turns
+/// directories, OAuth apps, client registration, merges and handoff off), so it holds every route AbpGuard.HttpApi can
+/// serve; this fails when the kept copy differs, as it does after any change to the API or the version, and
+/// ABP_GUARD_UPDATE_OPENAPI=1 writes it instead.
 /// Needs Postgres: localhost:5432 (postgres/postgres), or the server GUARD_TEST_POSTGRES names.
 /// </summary>
 [Collection(SampleHost.Collection)]
@@ -16,6 +18,9 @@ public sealed class OpenApiContractTests : IAsyncLifetime
 {
     private static readonly string Server =
         Environment.GetEnvironmentVariable("GUARD_TEST_POSTGRES") is { Length: > 0 } server ? server : "Host=localhost;Port=5432;Username=postgres;Password=postgres";
+
+    /// <summary>The features the sample turns off, on for the document.</summary>
+    private static readonly string[] Features = ["Directories", "OAuthApps", "ClientRegistration", "Merges", "Handoff"];
 
     private readonly string _database = "guard_openapi_" + Guid.NewGuid().ToString("N")[..12];
     private WebApplicationFactory<Program>? _factory;
@@ -25,6 +30,11 @@ public sealed class OpenApiContractTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
         Environment.SetEnvironmentVariable("ConnectionStrings__Guard", $"{Server};Database={_database}");
         Environment.SetEnvironmentVariable("Guard__Seed__AdminPassword", "OpenApi-Admin-Pass-1");
+        foreach (string feature in Features)
+        {
+            Environment.SetEnvironmentVariable($"Guard__Features__{feature}", "true");
+        }
+
         _factory = new WebApplicationFactory<Program>();
         return Task.CompletedTask;
     }
@@ -34,6 +44,11 @@ public sealed class OpenApiContractTests : IAsyncLifetime
         if (_factory is not null)
         {
             await _factory.DisposeAsync();
+        }
+
+        foreach (string feature in Features)
+        {
+            Environment.SetEnvironmentVariable($"Guard__Features__{feature}", null);
         }
 
         NpgsqlConnection.ClearAllPools();
@@ -55,6 +70,9 @@ public sealed class OpenApiContractTests : IAsyncLifetime
         Assert.Contains("/api/guard/accounts/page", paths);
         Assert.Contains("/api/guard/me/passkeys", paths);
         Assert.Contains("/api/guard/session/step-up", paths);
+        Assert.Contains("/api/guard/directories", paths);
+        Assert.Contains("/api/guard/merges", paths);
+        Assert.Contains("/api/guard/accounts/{id}/merge/preview", paths);
         Assert.Equal(AbpGuardModule.Version, (string?)document["info"]!["version"]);
 
         string text = document.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).Replace("\r\n", "\n") + "\n";
