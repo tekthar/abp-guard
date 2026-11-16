@@ -6,6 +6,12 @@ change the API.
 
 ## [Unreleased]
 
+### Added
+
+- `SignUpSettingsDto.directories` (`{ id, name }[]`): the directories sign-ups may go to, the active internal ones in the
+  site's order, so a screen offers them without `GET /directories`, which needs the Directories feature.
+- `GroupDto.system`: true for Guard's own groups (the admins and everyone), which can be renamed but not deleted.
+
 ## [0.8.2] - 2026-11-16
 
 0.8.1's release in full, and an account's `can` flags. 0.8.1 reached nuget.org only in part (AbpGuard, AbpGuard.HttpApi

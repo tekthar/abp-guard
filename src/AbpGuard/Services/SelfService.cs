@@ -14,7 +14,17 @@ using Microsoft.Extensions.Options;
 namespace AbpGuard.Services;
 
 /// <summary>Sign-up as the site has it: on or off, the directory accounts go to, and the email domains it takes.</summary>
-public sealed record SignUpSettingsDto(bool Enabled, Guid? DirectoryId, string? DirectoryName, List<string> EmailDomains);
+public sealed record SignUpSettingsDto(bool Enabled, Guid? DirectoryId, string? DirectoryName, List<string> EmailDomains)
+{
+    /// <summary>
+    /// The directories sign-ups may go to: the active internal ones, in the site's order. A screen offers these without
+    /// asking for every directory (which needs the Directories feature).
+    /// </summary>
+    public List<SignUpDirectoryDto> Directories { get; init; } = [];
+}
+
+/// <summary>A directory sign-ups may go to.</summary>
+public sealed record SignUpDirectoryDto(Guid Id, string Name);
 
 public sealed record SignUpSettingsInput([property: JsonRequired] bool Enabled, Guid? DirectoryId, List<string>? EmailDomains);
 
@@ -116,7 +126,12 @@ public class SelfService(GuardDb guardDb, AccountProjector projector, IDataProte
     {
         SignUpSettings s = await LoadAsync(db, ct);
         string? name = s.DirectoryId is { } id ? await db.Directories.Where(d => d.Id == id).Select(d => d.Name).FirstOrDefaultAsync(ct) : null;
-        return new SignUpSettingsDto(s.Enabled, s.DirectoryId, name, s.EmailDomains);
+        List<SignUpDirectoryDto> directories = await db.Directories.AsNoTracking()
+            .Where(d => d.Type == GuardConstants.InternalType && d.IsActive)
+            .OrderBy(d => d.Order).ThenBy(d => d.Name)
+            .Select(d => new SignUpDirectoryDto(d.Id, d.Name))
+            .ToListAsync(ct);
+        return new SignUpSettingsDto(s.Enabled, s.DirectoryId, name, s.EmailDomains) { Directories = directories };
     }, cancellationToken: ct);
 
     public async Task<SignUpSettingsDto> SaveSettingsAsync(SignUpSettingsInput input, CancellationToken ct)

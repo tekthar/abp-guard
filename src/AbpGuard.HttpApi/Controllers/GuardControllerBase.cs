@@ -131,6 +131,9 @@ public sealed record GroupDto(
 {
     /// <summary>Its name in other languages; Name is the English, or only, one.</summary>
     public Dictionary<string, string> Names { get; init; } = [];
+
+    /// <summary>One of Guard's own groups (the admins and everyone): it can be renamed, but not deleted.</summary>
+    public bool System { get; init; }
 }
 
 public sealed record GroupMemberDto(string MemberType, Guid MemberId, string Name, string? DisplayName, string DirectoryName, string Source, bool Removable);

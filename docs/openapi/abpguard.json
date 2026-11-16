@@ -7999,6 +7999,9 @@
             "additionalProperties": {
               "type": "string"
             }
+          },
+          "system": {
+            "type": "boolean"
           }
         }
       },
@@ -10737,6 +10740,22 @@
           }
         }
       },
+      "SignUpDirectoryDto": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "SignUpInfoDto": {
         "required": [
           "enabled",
@@ -10818,6 +10837,12 @@
             "type": "array",
             "items": {
               "type": "string"
+            }
+          },
+          "directories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SignUpDirectoryDto"
             }
           }
         }

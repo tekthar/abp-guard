@@ -209,6 +209,28 @@ public sealed partial class SecurityTests : IAsyncLifetime
         Assert.Equal(new[] { false, false, false, false, false, false, false }, await CanAsync(d, desk));
     }
 
+    [Fact]
+    public async Task Sign_up_settings_name_their_directories_and_groups_say_which_are_guards_own()
+    {
+        Session admin = await SignInAsync("admin", AdminPassword);
+
+        (HttpStatusCode code, string body) = await admin.SendAsync(HttpMethod.Get, "/api/guard/signup/settings");
+        Assert.True(code == HttpStatusCode.OK, body);
+        JsonElement directories = JsonDocument.Parse(body).RootElement.GetProperty("directories");
+        Assert.Contains(directories.EnumerateArray(), d => d.GetProperty("id").GetGuid() == Internal);
+
+        (HttpStatusCode created, string made) = await admin.SendAsync(HttpMethod.Post, "/api/guard/groups", new { name = "Team Kites" });
+        Assert.True(created == HttpStatusCode.OK, made);
+        Guid team = JsonDocument.Parse(made).RootElement.GetProperty("id").GetGuid();
+        (code, body) = await admin.SendAsync(HttpMethod.Get, "/api/guard/groups");
+        Assert.True(code == HttpStatusCode.OK, body);
+        Dictionary<Guid, bool> system = JsonDocument.Parse(body).RootElement.EnumerateArray()
+            .ToDictionary(g => g.GetProperty("id").GetGuid(), g => g.GetProperty("system").GetBoolean());
+        Assert.True(system[Admins]);
+        Assert.True(system[Guid.Parse("00000000-0000-0000-0000-00000000a002")]);
+        Assert.False(system[team]);
+    }
+
     /// <summary>The account detail's can flags: update, lock, unlock, merge, resetSecondFactor, erase, exportData.</summary>
     private static async Task<bool[]> CanAsync(Session caller, Guid account)
     {

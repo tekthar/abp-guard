@@ -473,7 +473,11 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
                 g.Id, g.Name, g.Description, g.DirectoryId, directories.GetValueOrDefault(g.DirectoryId, "?"), g.IsLocal, IsWritable(g),
                 g.Kind == GroupKinds.Directory ? owned.GetValueOrDefault(g.DirectoryId) : counts.Where(c => c.GroupId == g.Id && !c.IsGroup).Sum(c => c.Count),
                 counts.Where(c => c.GroupId == g.Id && c.IsGroup).Sum(c => c.Count),
-                g.Kind, g.Computed, g.Attributes, g.EmailDomains, g.TwoFactor) { Names = g.Names })
+                g.Kind, g.Computed, g.Attributes, g.EmailDomains, g.TwoFactor)
+            {
+                Names = g.Names,
+                System = g.Id == GuardConstants.AdminsGroupId || g.Id == GuardConstants.UsersGroupId,
+            })
             .ToList();
     }
 }
