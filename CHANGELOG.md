@@ -6,8 +6,10 @@ change the API.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-16
+
 Two new packages, `AbpConnections` and `AbpConnections.HttpApi`: connections to outside systems, which an application
-had to write itself. AbpGuard's own packages don't change. Nothing to migrate in Guard's database; a host that adds
+had to write itself. AbpGuard's own packages come out at 0.8.0 unchanged. Nothing to migrate in Guard's database; a host that adds
 connections makes their two tables in its own migrations.
 
 ### Added
