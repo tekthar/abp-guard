@@ -29,7 +29,8 @@ public class AbpGuardModule : AbpModule
     /// <summary>The default authentication scheme: it sends each bearer token to the handler for its kind, and a browser's cookie to its session's.</summary>
     public const string GuardBearer = "GuardBearer";
 
-    public const string Version = "0.7.0";
+    /// <summary>The packages' version, as Directory.Build.props gives it (scripts/check-release.sh checks the two agree).</summary>
+    public const string Version = "0.8.0";
 
     /// <summary>
     /// The scheme for a request: a personal access token, any other bearer token (OpenIddict's), or with no

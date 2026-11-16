@@ -232,10 +232,16 @@ dotnet test AbpGuard.slnx -c Release
 dotnet pack AbpGuard.slnx -c Release -o artifacts
 ```
 
+**The API's document:** `docs/openapi/abpguard.json` is the OpenAPI document of AbpGuard.HttpApi's actions, as the sample
+serves it (`/openapi/abpguard.json`). Screens generate their types from it (`openapi-typescript`, as `@abpjs/ui`'s guard
+area does). A host test fails when it no longer matches the API or the version; run the host tests with
+`ABP_GUARD_UPDATE_OPENAPI=1` to write it again, and commit it with the change.
+
 ## Releasing
 
-The version is `VersionPrefix` and `VersionSuffix` in `Directory.Build.props`, and `CHANGELOG.md` needs an entry for
-it. Pushing the tag `v<version>`, such as `v0.2.0`, runs the checks. GitHub Actions then pushes the packages
+The version is `VersionPrefix` and `VersionSuffix` in `Directory.Build.props`, `AbpGuardModule.Version` says the same,
+and `CHANGELOG.md` needs an entry for it; `docs/openapi/abpguard.json` is written again for the new version
+(`scripts/check-release.sh` and the host tests check them). Pushing the tag `v<version>`, such as `v0.2.0`, runs the checks. GitHub Actions then pushes the packages
 to nuget.org and makes a GitHub release.
 
 Publishing uses nuget.org's Trusted Publishing, so no API key is stored anywhere: nuget.org gives the release job a key

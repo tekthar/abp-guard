@@ -6,6 +6,17 @@ change the API.
 
 ## [Unreleased]
 
+### Added
+
+- `docs/openapi/abpguard.json`: the OpenAPI document of AbpGuard.HttpApi's actions, served by the sample at
+  `/openapi/abpguard.json`, for screens to generate their types from. A host test keeps it current
+  (`ABP_GUARD_UPDATE_OPENAPI=1` writes it).
+
+### Fixed
+
+- `AbpGuardModule.Version` said 0.7.0 through 0.7.1 and 0.8.0; it says the packages' version again, and
+  `scripts/check-release.sh` checks the two agree.
+
 ## [0.8.0] - 2026-11-16
 
 Two new packages, `AbpConnections` and `AbpConnections.HttpApi`: connections to outside systems, which an application

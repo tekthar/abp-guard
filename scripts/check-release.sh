@@ -25,6 +25,11 @@ if [[ -n "$tag" && "$tag" != "v$version" ]]; then
   problems+=("the tag is \"$tag\" but Directory.Build.props says $version: tag v$version")
 fi
 
+module_version=$(sed -n 's:.*public const string Version = "\(.*\)";.*:\1:p' src/AbpGuard/AbpGuardModule.cs)
+if [[ "$module_version" != "$version" ]]; then
+  problems+=("AbpGuardModule.Version is \"$module_version\" but Directory.Build.props says $version")
+fi
+
 if ! grep -qF "## [$version]" CHANGELOG.md; then
   problems+=("CHANGELOG.md has no \"## [$version]\" entry")
 fi

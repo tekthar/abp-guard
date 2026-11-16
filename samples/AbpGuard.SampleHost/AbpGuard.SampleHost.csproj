@@ -8,6 +8,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\AbpGuard.HttpApi\AbpGuard.HttpApi.csproj" />
     <PackageReference Include="Volo.Abp.Autofac" Version="$(AbpVersion)" />
+    <!-- Guard's API as its own document (/openapi/abpguard.json), which docs/openapi/abpguard.json keeps and screens' types come from. -->
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
   </ItemGroup>
 
 </Project>
