@@ -190,6 +190,35 @@ public sealed partial class SecurityTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_accounts_detail_says_what_the_caller_may_do_to_it()
+    {
+        Session admin = await SignInAsync("admin", AdminPassword);
+        Guid desk = await CreateAccountAsync(admin, "desk2", "desk2@corp.example");
+        Guid person = await CreateAccountAsync(admin, "person2", "person2@corp.example");
+        Guid other = await CreateAccountAsync(admin, "admin-two", "admin-two@corp.example");
+        await AddToAdminsAsync(admin, other);
+        await GrantAsync(admin, Helpdesk, desk, new { directoryIds = new[] { Internal } });
+
+        // A site admin: every action, merges on here; erasure and data export are on by default.
+        Assert.Equal(new[] { true, true, true, true, true, true, true }, await CanAsync(admin, person));
+
+        // The helpdesk, scoped to the internal directory: lock and unlock a person, nothing else; not another admin, not itself.
+        Session d = await SignInAsync("desk2", Password);
+        Assert.Equal(new[] { false, true, true, false, false, false, false }, await CanAsync(d, person));
+        Assert.Equal(new[] { false, false, false, false, false, false, false }, await CanAsync(d, other));
+        Assert.Equal(new[] { false, false, false, false, false, false, false }, await CanAsync(d, desk));
+    }
+
+    /// <summary>The account detail's can flags: update, lock, unlock, merge, resetSecondFactor, erase, exportData.</summary>
+    private static async Task<bool[]> CanAsync(Session caller, Guid account)
+    {
+        (HttpStatusCode code, string body) = await caller.SendAsync(HttpMethod.Get, $"/api/guard/accounts/{account}");
+        Assert.True(code == HttpStatusCode.OK, $"{(int)code}: {body}");
+        JsonElement can = JsonDocument.Parse(body).RootElement.GetProperty("can");
+        return [.. new[] { "update", "lock", "unlock", "merge", "resetSecondFactor", "erase", "exportData" }.Select(k => can.GetProperty(k).GetBoolean())];
+    }
+
+    [Fact]
     public async Task A_password_reset_ends_the_sessions_that_had_the_old_one()
     {
         Session admin = await SignInAsync("admin", AdminPassword);

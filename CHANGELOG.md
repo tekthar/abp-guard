@@ -6,6 +6,14 @@ change the API.
 
 ## [Unreleased]
 
+### Added
+
+- `AccountDetailDto.can` (`AccountCanDto`): what the caller may do to the account (`update`, `lock`, `unlock`, `merge`,
+  `resetSecondFactor`, `erase`, `exportData`), by the same rules its actions check: the caller's ability against the
+  account (a helpdesk scoped to some directories), only a site admin acting on another site admin, an account with
+  roles or groups of its own merged only by an admin, and the features that are on. A screen shows only the buttons
+  that would work; rights, not state.
+
 ## [0.8.1] - 2026-11-16
 
 0.8.0's release in full. 0.8.0 reached nuget.org only in part (AbpGuard.Contracts): nuget.org refused the first new

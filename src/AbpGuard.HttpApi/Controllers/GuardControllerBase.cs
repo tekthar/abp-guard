@@ -101,7 +101,23 @@ public sealed record EffectiveGroupDto(Guid GroupId, string Name, Guid Directory
 
 /// <summary>An account with its directory records, groups, addresses and the merges it was in, newest first.</summary>
 public sealed record AccountDetailDto(AccountDto Account, List<IdentityDto> Identities, List<EffectiveGroupDto> Groups, AccountEmailsDto Addresses,
-    List<AccountMergeDto> Merges, string? MergedIntoUsername);
+    List<AccountMergeDto> Merges, string? MergedIntoUsername)
+{
+    /// <summary>What the caller may do to the account, so a screen shows only the buttons that would work.</summary>
+    public AccountCanDto Can { get; init; } = AccountCanDto.None;
+}
+
+/// <summary>
+/// What the caller may do to an account, as its actions would answer: the caller's ability against the account (a
+/// helpdesk scoped to some directories, say), the rule that only a site admin locks, unlocks or resets the factors of
+/// another site admin, an account's own roles or groups that only an admin merges, and the features that are on. Rights,
+/// not state: a screen shows Lock or Unlock by the account's status. <see cref="Merge"/> is the account's side alone;
+/// the survivor a merge picks is checked when it's sent.
+/// </summary>
+public sealed record AccountCanDto(bool Update, bool Lock, bool Unlock, bool Merge, bool ResetSecondFactor, bool Erase, bool ExportData)
+{
+    public static AccountCanDto None { get; } = new(false, false, false, false, false, false, false);
+}
 
 /// <summary>
 /// A group: Kind (standard, directory, ou, organization); Computed when Guard works out its members (a directory's

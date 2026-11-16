@@ -6321,6 +6321,41 @@
   },
   "components": {
     "schemas": {
+      "AccountCanDto": {
+        "required": [
+          "update",
+          "lock",
+          "unlock",
+          "merge",
+          "resetSecondFactor",
+          "erase",
+          "exportData"
+        ],
+        "type": "object",
+        "properties": {
+          "update": {
+            "type": "boolean"
+          },
+          "lock": {
+            "type": "boolean"
+          },
+          "unlock": {
+            "type": "boolean"
+          },
+          "merge": {
+            "type": "boolean"
+          },
+          "resetSecondFactor": {
+            "type": "boolean"
+          },
+          "erase": {
+            "type": "boolean"
+          },
+          "exportData": {
+            "type": "boolean"
+          }
+        }
+      },
       "AccountDetailDto": {
         "required": [
           "account",
@@ -6361,6 +6396,9 @@
               "null",
               "string"
             ]
+          },
+          "can": {
+            "$ref": "#/components/schemas/AccountCanDto"
           }
         }
       },

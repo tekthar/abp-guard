@@ -91,7 +91,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
     {
         Casl.Ability ability = await AbilityAsync(cancellationToken);
         List<AccountMergeDto> merged = await merges.ListAsync(id, 50, cancellationToken);
-        return await guardDb.RunAsync(async db =>
+        (AccountDetailDto detail, Account target) = await guardDb.RunAsync(async db =>
         {
             Account account = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, cancellationToken)
                 ?? throw new EntityNotFoundException(typeof(Account), id);
@@ -112,10 +112,36 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
                 .ToList();
 
             string? into = account.MergedIntoId is { } survivor ? await db.Accounts.Where(a => a.Id == survivor).Select(a => a.Username).FirstOrDefaultAsync(cancellationToken) : null;
-            return new AccountDetailDto(AccountDto.From(account, directories[account.DirectoryId].Name), identities, groups,
-                await AccountEmailService.LoadAsync(db, id, cancellationToken), merged, into);
+            return (new AccountDetailDto(AccountDto.From(account, directories[account.DirectoryId].Name), identities, groups,
+                await AccountEmailService.LoadAsync(db, id, cancellationToken), merged, into), account);
         }, cancellationToken: cancellationToken);
+        return detail with { Can = await CanAsync(ability, target, cancellationToken) };
     }
+
+    /// <summary>What the caller may do to the account, by the same rules its actions check (<see cref="AccountCanDto"/>).</summary>
+    private async Task<AccountCanDto> CanAsync(Casl.Ability ability, Account account, CancellationToken cancellationToken)
+    {
+        GuardFeatures features = HttpContext.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<GuardOptions>>().Value.Features;
+        bool admin = ability.Can("manage", "all");
+        // As EnsureNotAnAdminAsync: only a site admin locks, unlocks or resets the factors of another site admin.
+        bool anotherAdmin = !admin && await HttpContext.RequestServices.GetRequiredService<AbilityFactory>().HoldsAdminRightsAsync(account.Id, cancellationToken);
+        bool merge = features.Merges && ability.Can("merge", account) && (admin || !await HoldsRightsOfItsOwnAsync(account.Id, cancellationToken));
+        return new AccountCanDto(
+            Update: ability.Can("update", account),
+            Lock: !anotherAdmin && ability.Can("lock", account),
+            Unlock: !anotherAdmin && ability.Can("unlock", account),
+            Merge: merge,
+            ResetSecondFactor: features.TwoFactor && !anotherAdmin && ability.Can("reset-second-factor", account),
+            Erase: admin && features.Erasure,
+            ExportData: admin && features.DataExport);
+    }
+
+    /// <summary>Whether the account has roles or groups of its own (granted to it, not from a directory): only an admin merges it.</summary>
+    private Task<bool> HoldsRightsOfItsOwnAsync(Guid accountId, CancellationToken cancellationToken) =>
+        guardDb.RunAsync(async db =>
+            await db.RoleGrants.AnyAsync(g => g.PrincipalType == PrincipalType.Account && g.PrincipalId == accountId, cancellationToken)
+            || await db.Memberships.AnyAsync(m => m.MemberType == MemberType.Account && m.MemberId == accountId && m.Source == MembershipSource.Manual, cancellationToken),
+            cancellationToken: cancellationToken);
 
     /// <summary>A user to create in an internal directory: Guard's own, or another such as Customers.</summary>
     public sealed record CreateAccountInput(string Username, string DisplayName, string? Email, string Password, Guid? DirectoryId = null);
@@ -394,11 +420,7 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
             throw new UserFriendlyException("Only an administrator can merge another account into their own.", GuardErrorCodes.Forbidden);
         }
 
-        bool holdsRights = await guardDb.RunAsync(async db =>
-            await db.RoleGrants.AnyAsync(g => g.PrincipalType == PrincipalType.Account && g.PrincipalId == sourceId, cancellationToken)
-            || await db.Memberships.AnyAsync(m => m.MemberType == MemberType.Account && m.MemberId == sourceId && m.Source == MembershipSource.Manual, cancellationToken),
-            cancellationToken: cancellationToken);
-        if (holdsRights)
+        if (await HoldsRightsOfItsOwnAsync(sourceId, cancellationToken))
         {
             throw new UserFriendlyException("This account has roles or groups of its own: only an administrator can merge it.", GuardErrorCodes.Forbidden);
         }
