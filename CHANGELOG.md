@@ -6,6 +6,12 @@ change the API.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-16
+
+0.8.0's release in full. 0.8.0 reached nuget.org only in part (AbpGuard.Contracts): nuget.org refused the first new
+package, so AbpGuard, its other packages and AbpConnections weren't published. 0.8.1 publishes them all, with 0.8.0's
+changes below and these. Nothing to migrate. Use 0.8.1, not 0.8.0.
+
 ### Added
 
 - `docs/openapi/abpguard.json`: the OpenAPI document of AbpGuard.HttpApi's actions, served by the sample at
@@ -18,6 +24,8 @@ change the API.
   `scripts/check-release.sh` checks the two agree.
 
 ## [0.8.0] - 2026-11-16
+
+Published only in part: AbpGuard.Contracts alone reached nuget.org. Use 0.8.1.
 
 Two new packages, `AbpConnections` and `AbpConnections.HttpApi`: connections to outside systems, which an application
 had to write itself. AbpGuard's own packages come out at 0.8.0 unchanged. Nothing to migrate in Guard's database; a host that adds
