@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Checks that the version is ready to release: CHANGELOG.md has a "## [<version>]" entry; given --tag v<version>, that
-# the tag names the version in Directory.Build.props; given --unpublished, that nuget.org doesn't have AbpGuard at
-# that version yet (nuget.org refuses a duplicate push, but only after the other packages went). Exits 1 with the reason
-# otherwise.
+# the tag names the version in Directory.Build.props; given --unpublished, that at least one package (src/*/*.csproj) isn't
+# on nuget.org at that version yet. A version every package already has must be bumped; one some packages have is a
+# partial publish (nuget.org refused a new ID), which a rerun finishes, since the push skips what's there. Exits 1 with the
+# reason otherwise.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -35,17 +36,27 @@ if ! grep -qF "## [$version]" CHANGELOG.md; then
 fi
 
 if [[ $check_registry == 1 ]]; then
-  versions=$(mktemp)
-  status=$(curl -s -o "$versions" -w '%{http_code}' "https://api.nuget.org/v3-flatcontainer/abpguard/index.json" || true)
   lower=$(printf '%s' "$version" | tr '[:upper:]' '[:lower:]')
-  if [[ "$status" == "200" ]]; then
-    if grep -qF "\"$lower\"" "$versions"; then
-      problems+=("AbpGuard $version is already on nuget.org: bump the version")
+  published=()
+  missing=()
+  for project in src/*/*.csproj; do
+    id=$(basename "$project" .csproj)
+    versions=$(mktemp)
+    status=$(curl -s -o "$versions" -w '%{http_code}' "https://api.nuget.org/v3-flatcontainer/$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')/index.json" || true)
+    if [[ "$status" == "200" ]] && grep -qF "\"$lower\"" "$versions"; then
+      published+=("$id")
+    elif [[ "$status" == "200" || "$status" == "404" ]]; then
+      missing+=("$id")
+    else
+      problems+=("can't ask nuget.org for $id's versions (HTTP $status)")
     fi
-  elif [[ "$status" != "404" ]]; then
-    problems+=("can't ask nuget.org for AbpGuard's versions (HTTP $status)")
+    rm -f "$versions"
+  done
+  if [[ ${#missing[@]} -eq 0 && ${#problems[@]} -eq 0 ]]; then
+    problems+=("every package is already on nuget.org at $version: bump the version")
+  elif [[ ${#published[@]} -gt 0 ]]; then
+    echo "AbpGuard $version: finishing a partial publish: ${published[*]} already on nuget.org; ${missing[*]} to push"
   fi
-  rm -f "$versions"
 fi
 
 if [[ ${#problems[@]} -gt 0 ]]; then

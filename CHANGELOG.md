@@ -6,6 +6,13 @@ change the API.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-16
+
+0.8.1's release in full, and an account's `can` flags. 0.8.1 reached nuget.org only in part (AbpGuard, AbpGuard.HttpApi
+and AbpGuard.Contracts; AbpGuard.Acting and AbpConnections were refused before nuget.org's policy covered the new IDs),
+and its rerun was stopped by the release check. 0.8.2 publishes every package. Nothing to migrate. Use 0.8.2, not 0.8.0
+or 0.8.1.
+
 ### Added
 
 - `AccountDetailDto.can` (`AccountCanDto`): what the caller may do to the account (`update`, `lock`, `unlock`, `merge`,
@@ -14,7 +21,15 @@ change the API.
   roles or groups of its own merged only by an admin, and the features that are on. A screen shows only the buttons
   that would work; rights, not state.
 
+### Fixed
+
+- The release check's `--unpublished` asks nuget.org about every package, not AbpGuard alone: a version every package
+  has must be bumped, and one only some have is a partial publish that a rerun of the tag finishes (the push skips
+  what's there).
+
 ## [0.8.1] - 2026-11-16
+
+Published only in part: AbpGuard, AbpGuard.HttpApi and AbpGuard.Contracts. Use 0.8.2.
 
 0.8.0's release in full. 0.8.0 reached nuget.org only in part (AbpGuard.Contracts): nuget.org refused the first new
 package, so AbpGuard, its other packages and AbpConnections weren't published. 0.8.1 publishes them all, with 0.8.0's
