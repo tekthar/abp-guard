@@ -30,7 +30,7 @@ public class AbpGuardModule : AbpModule
     public const string GuardBearer = "GuardBearer";
 
     /// <summary>The packages' version, as Directory.Build.props gives it (scripts/check-release.sh checks the two agree).</summary>
-    public const string Version = "0.8.2";
+    public const string Version = "0.8.3";
 
     /// <summary>
     /// The scheme for a request: a personal access token, any other bearer token (OpenIddict's), or with no

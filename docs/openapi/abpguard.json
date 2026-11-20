@@ -3,7 +3,7 @@
   "info": {
     "title": "AbpGuard API",
     "description": "AbpGuard.HttpApi\u0027s actions under api/guard (the token endpoint, OpenIddict\u0027s, isn\u0027t here). Errors are ABP\u0027s: { \u0022error\u0022: { \u0022code\u0022, \u0022message\u0022, \u0022details\u0022, \u0022data\u0022, \u0022validationErrors\u0022 } }; a step-up asked is 403 step_up_required with data { level, category, methods, appCodeAlone, maxAgeSeconds }.",
-    "version": "0.8.2"
+    "version": "0.8.3"
   },
   "paths": {
     "/api/guard/accounts": {

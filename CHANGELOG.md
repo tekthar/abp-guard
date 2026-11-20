@@ -6,6 +6,11 @@ change the API.
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-11-20
+
+Two additions for the people screens in @abpjs/ui. Nothing to migrate. AbpConnections is unchanged and moves to 0.8.3
+with the other packages.
+
 ### Added
 
 - `SignUpSettingsDto.directories` (`{ id, name }[]`): the directories sign-ups may go to, the active internal ones in the
