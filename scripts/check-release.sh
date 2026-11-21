@@ -40,6 +40,8 @@ if [[ $check_registry == 1 ]]; then
   published=()
   missing=()
   for project in src/*/*.csproj; do
+    # A project not packed yet (IsPackable false until the release that carries it) has nothing to publish.
+    grep -q '<IsPackable>false</IsPackable>' "$project" && continue
     id=$(basename "$project" .csproj)
     versions=$(mktemp)
     status=$(curl -s -o "$versions" -w '%{http_code}' "https://api.nuget.org/v3-flatcontainer/$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')/index.json" || true)

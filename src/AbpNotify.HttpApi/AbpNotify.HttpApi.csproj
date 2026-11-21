@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>AbpNotify.HttpApi: notices over HTTP under api/notify. Each person's inbox and choices, their addresses on channels and their phones; for admins, the site's sending settings, the channels and teams' channels. Who may manage them is the application's (INotifyRights): site admins and the site's by default.</Description>
+    <PackageTags>abp;notifications;notices;api</PackageTags>
+    <!-- Packed from the release that carries AbpNotify (CHANGELOG.md); until then a tag doesn't ship it. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Volo.Abp.AspNetCore.Mvc" Version="$(AbpVersion)" />
+    <ProjectReference Include="..\AbpNotify\AbpNotify.csproj" />
+  </ItemGroup>
+
+</Project>

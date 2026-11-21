@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>AbpNotify.Contracts: the channel contract for whoever adds a way to reach people, in an application or a plugin (INotifyChannel, IPersonalNotifyChannel, a rendered NotifyDelivery, people's verified addresses), and the messenger a plugin sends through. Nothing but .NET.</Description>
+    <PackageTags>abp;notifications;channels;plugins</PackageTags>
+    <!-- Packed from the release that carries AbpNotify (CHANGELOG.md); until then a tag doesn't ship it. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

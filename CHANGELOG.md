@@ -6,6 +6,25 @@ change the API.
 
 ## [Unreleased]
 
+### Added (not packed yet)
+
+- **AbpNotify**, on AbpConnections: notices as each person chose (now, gathered after a burst, in an hourly or daily
+  digest, never in their quiet hours), each claimed before it's sent so two servers never send it twice, and by a chat
+  channel first with mail when chat can't reach the person; an inbox, read and unread; people's addresses on channels,
+  a typed one verified with a code sent once as a secret; phones and push through Firebase Cloud Messaging (the `fcm`
+  connection kind); Slack and Teams (the `slack` and `teams` kinds) for people and for teams' channels, which post once
+  per event and keep their connection from being removed. The tables live in the host's own context
+  (`ConfigureNotify`, `INotifyDbContext`), under the names it gives them. The host renders and sends
+  (`INotifyMessenger`), and gives its people (`INotifyPeople`), its digest's model (`INoticeDigests`) and its mail
+  channel; what a push carries is `IPushMessages` (`PlainPushMessages` by default).
+- **AbpNotify.Contracts**: the channel contract (`INotifyChannel`, `IPersonalNotifyChannel`, `NotifyDelivery`,
+  `INotifyAddresses`) and the messenger, with nothing but .NET, so a plugin that adds a channel takes only this.
+- **AbpNotify.HttpApi**: `api/notify`, each person's inbox, choices, addresses and phones; the site's sending settings,
+  the channels and teams' channels for whoever `INotifyRights` allows (site admins by default).
+
+The three projects aren't packed (`IsPackable` false) until the release that carries them; nuget.org's Trusted
+Publishing must take `AbpNotify*` before that tag.
+
 ## [0.9.0] - 2026-11-21
 
 The people actions a site's admin screens need: deactivating someone who left, deleting an account nobody used,

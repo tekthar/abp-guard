@@ -6,6 +6,9 @@
     <Project Path="src/AbpGuard.HttpApi/AbpGuard.HttpApi.csproj" />
     <Project Path="src/AbpConnections/AbpConnections.csproj" />
     <Project Path="src/AbpConnections.HttpApi/AbpConnections.HttpApi.csproj" />
+    <Project Path="src/AbpNotify.Contracts/AbpNotify.Contracts.csproj" />
+    <Project Path="src/AbpNotify/AbpNotify.csproj" />
+    <Project Path="src/AbpNotify.HttpApi/AbpNotify.HttpApi.csproj" />
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/AbpGuard.SampleHost/AbpGuard.SampleHost.csproj" />
@@ -14,5 +17,6 @@
     <Project Path="tests/AbpGuard.Tests/AbpGuard.Tests.csproj" />
     <Project Path="tests/AbpGuard.Host.Tests/AbpGuard.Host.Tests.csproj" />
     <Project Path="tests/AbpConnections.Tests/AbpConnections.Tests.csproj" />
+    <Project Path="tests/AbpNotify.Tests/AbpNotify.Tests.csproj" />
   </Folder>
 </Solution>

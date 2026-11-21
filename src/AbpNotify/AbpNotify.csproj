@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>AbpNotify: notices for an ABP app on .NET 10 and EF Core, as each person chose (now, gathered after a burst, in an hourly or daily digest, never in their quiet hours), claimed before they're sent so two servers never send one twice; an inbox read and unread; people's addresses on channels, a typed one verified with a code; phones and push through Firebase Cloud Messaging; Slack and Teams, for people and for teams' channels, posting once per event, through AbpConnections. The application renders and sends (its templates, its outbox).</Description>
+    <PackageTags>abp;notifications;notices;digest;push;fcm;slack;teams;efcore</PackageTags>
+    <!-- Packed from the release that carries AbpNotify (CHANGELOG.md); until then a tag doesn't ship it. -->
+    <IsPackable>false</IsPackable>
+    <!-- EF1002: the raw SQL interpolates only the tables' and columns' names, from the host's model (NotifyTable);
+         every value goes as a parameter. -->
+    <NoWarn>$(NoWarn);EF1002</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AbpNotify.Contracts\AbpNotify.Contracts.csproj" />
+    <ProjectReference Include="..\AbpConnections\AbpConnections.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AbpNotify.Tests" />
+  </ItemGroup>
+
+</Project>
