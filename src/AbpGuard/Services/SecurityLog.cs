@@ -28,6 +28,19 @@ public static class SecurityAuditTypes
     public const string AccountCreated = "account.created";
     public const string AccountLocked = "account.locked";
     public const string AccountUnlocked = "account.unlocked";
+
+    /// <summary>An admin deactivated an account (the person left) or activated it again.</summary>
+    public const string AccountDeactivated = "account.deactivated";
+    public const string AccountActivated = "account.activated";
+
+    /// <summary>An admin had a link mailed to choose a new password; invited someone (or sent it again); deleted an unused account.</summary>
+    public const string PasswordResetSent = "account.password-reset-sent";
+    public const string AccountInvited = "account.invited";
+    public const string AccountDeleted = "account.deleted";
+
+    /// <summary>A list of accounts or groups exported as CSV, with its filters and how many rows.</summary>
+    public const string AccountsExported = "account.exported";
+    public const string GroupsExported = "group.exported";
     public const string AccountMerged = "account.merged";
     public const string AddressAdded = "account.address.added";
     public const string AddressRemoved = "account.address.removed";

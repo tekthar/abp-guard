@@ -24,6 +24,8 @@ instead of writing its own security. Nothing in it assumes one product: every na
   host's own channels, with Off, Optional, Required or Strong per group, and a rule the server's operator may turn on that
   every site admin has a passkey or an authenticator app.
 - **Self-service:** sign-up with a confirmed email, and password reset.
+- **People actions** (0.9.0): deactivating someone who left, deleting an account nobody used yet, an admin's link to
+  choose a password, invitations, and lists that filter by directory, group with totals and export as CSV.
 - **Authorization with [CASL .NET](https://www.nuget.org/packages/Casl.Net):** roles hold rules in CASL's format; grants
   give a role to an account or a group with a scope; the same rules filter queries in SQL and go to the browser.
 - **Personal data:** a map of every store a site's modules and plugins keep, the record of processing, a person's
@@ -96,7 +98,7 @@ Configure it in the `Guard` section (`GuardOptions`):
   later choice stays. `Seed` names what the first start makes: the admin's display name and email, the internal
   directory, and the admins and users groups with their descriptions. The admin signs in as `admin` (its username, not
   its email). Its password is `Seed:AdminPassword`,
-  at least 10 characters: keep it in a secret store or an environment variable, not in `appsettings.json`. The sample
+  at least `Passwords:MinLength` characters: keep it in a secret store or an environment variable, not in `appsettings.json`. The sample
   host keeps its own in `appsettings.Development.json`, so it starts only in Development until you give one.
 - **Two-factor:** `TwoFactor:Issuer` is the name authenticator apps show. By default it is your product's English name
   and the site's host. Set `TwoFactor:ListsRecovery` to list "recovery" among the second step's methods when the person
@@ -116,6 +118,9 @@ Configure it in the `Guard` section (`GuardOptions`):
 - **Site admins:** `Admins:RequireStrongFactor` (off by default; environment `Guard__Admins__RequireStrongFactor`) makes
   every site admin have a passkey or an authenticator app, within `Admins:GraceHours` (48) of when Guard first sees them
   without one; after it, signing in asks them to set one up first.
+- **Passwords:** `Passwords:MinLength` (10, never under 8) and `Passwords:MaxLength` (200) are every password's rule;
+  `Passwords:AdminResetHours` (24) and `Passwords:InvitationDays` (7) are how long an admin's link and an invitation work
+  (a person's own reset stays an hour).
 - **Data folder:** `DataRoot` is where Guard looks once for sign-in key files kept on disk, and keeps them when there's
   no database for them. A host can give its own setting instead (`GuardStartupOptions`, through ABP's PreConfigure).
 
@@ -124,6 +129,15 @@ another kind.
 
 `IServiceAccounts` lets your own code make service accounts, and give them tokens, list and revoke them. Your code
 decides who may ask. Guard refuses tokens for an agent's account and audits each change as the admin pages do.
+
+What holds an account: every module that stores account ids implements `IAccountMergeParticipant`, and its preview's
+counts are also what keeps an unused account from being deleted (0.9.0; the survivor is `Guid.Empty` then). A module
+whose ids no merge rewrites adds `IAccountUsage`. History rows naming a deleted account would read as an unknown person,
+which is why only an account nobody used may go.
+
+`IGrantScopeCatalog` (0.9.0) lists a module's places where anonymous visitors may have a role, and the roles that suit
+each, so the admin screens offer them; a role is given there only when every allow rule keeps to the place (see the
+changelog). `IGrantScopeDescriber`'s labels may carry a short `Code`.
 
 `AddGuardKeyRing(certificate)` keeps the Data Protection key ring in Guard's database encrypted by a certificate. Every
 server needs the same certificate with its private key.

@@ -38,6 +38,9 @@ public sealed record TokenInput(string Token);
 
 public sealed record ForgotPasswordInput(string Email);
 
+/// <summary>What a password must be: its fewest and most characters (Guard:Passwords).</summary>
+public sealed record PasswordPolicyDto(int MinLength, int MaxLength);
+
 public sealed record ResetPasswordInput(string Token, string Password);
 
 /// <summary>The mails self-service sends: confirming an email, and resetting a password.</summary>
@@ -45,6 +48,8 @@ public static class SelfServiceMail
 {
     public const string Verify = GuardMessageKinds.SignUpVerify;
     public const string Reset = GuardMessageKinds.PasswordReset;
+    public const string PasswordSet = GuardMessageKinds.PasswordSet;
+    public const string Invitation = GuardMessageKinds.Invitation;
 
     private static Dictionary<string, string> Text(string en, string ar) => new() { ["en"] = en, ["ar"] = ar };
 
@@ -100,6 +105,64 @@ public static class SelfServiceMail
             ["username"] = "dana@example.com",
             ["link"] = "https://example.com/reset-password#token=sample",
             ["minutes"] = 60,
+        });
+
+    public static readonly GuardMessageTemplate PasswordSetDefinition = new(
+        PasswordSet,
+        Email: true,
+        Text("A new password, asked by an admin", "كلمة مرور جديدة بطلب من مسؤول"),
+        Text("Sent when an admin asks {product} to mail someone a link to choose a new password.", "تُرسل عندما يطلب مسؤول من {product} إرسال رابط لاختيار كلمة مرور جديدة."),
+        new Dictionary<string, GuardTemplateText>
+        {
+            ["en"] = new("Choose a new {product} password",
+                "Hello {{ recipient.name }},\n\nAn administrator asked for a new password for your {product} account {{ username }}. To choose one:\n\n[Choose my password]({{ link }})\n\n"
+                + "The link works once, for {{ hours }} hours. Your current password keeps working until you choose a new one."),
+            ["ar"] = new("اختر كلمة مرور جديدة لـ {product}",
+                "مرحبًا {{ recipient.name }}،\n\nطلب أحد المسؤولين كلمة مرور جديدة لحسابك في {product} {{ username }}. لاختيارها:\n\n[اختر كلمة المرور]({{ link }})\n\n"
+                + "يعمل الرابط مرة واحدة لمدة {{ hours }} ساعة. تبقى كلمة مرورك الحالية تعمل حتى تختار كلمة جديدة."),
+        },
+        [
+            new("recipient.name", Text("The account's owner", "صاحب الحساب")),
+            new("username", Text("The account's username", "اسم المستخدم للحساب")),
+            new("link", Text("The link to choose a new password", "رابط اختيار كلمة مرور جديدة")),
+            new("hours", Text("How long the link works", "مدة صلاحية الرابط")),
+        ],
+        new Dictionary<string, object?>
+        {
+            ["recipient"] = new Dictionary<string, object?> { ["name"] = "Dana Dev", ["email"] = "dana@example.com", ["time_zone"] = "UTC" },
+            ["username"] = "dana",
+            ["link"] = "https://example.com/reset-password#token=sample",
+            ["hours"] = 24,
+        });
+
+    public static readonly GuardMessageTemplate InvitationDefinition = new(
+        Invitation,
+        Email: true,
+        Text("An invitation", "دعوة"),
+        Text("Sent when an admin invites someone: they choose their password from the link.", "تُرسل عندما يدعو مسؤول شخصًا: يختار كلمة المرور من الرابط."),
+        new Dictionary<string, GuardTemplateText>
+        {
+            ["en"] = new("You're invited to {product}",
+                "Hello {{ recipient.name }},\n\n{{ inviter }} invited you to {product}. Your username is {{ username }}. To choose your password and sign in:\n\n[Choose my password]({{ link }})\n\n"
+                + "The link works for {{ days }} days, until you've chosen a password."),
+            ["ar"] = new("دعوة للانضمام إلى {product}",
+                "مرحبًا {{ recipient.name }}،\n\nدعاك {{ inviter }} إلى {product}. اسم المستخدم الخاص بك {{ username }}. لاختيار كلمة المرور وتسجيل الدخول:\n\n[اختر كلمة المرور]({{ link }})\n\n"
+                + "يعمل الرابط لمدة {{ days }} يوم، حتى تختار كلمة المرور."),
+        },
+        [
+            new("recipient.name", Text("The person invited", "الشخص المدعو")),
+            new("inviter", Text("Who invited them", "من دعاه")),
+            new("username", Text("Their username", "اسم المستخدم")),
+            new("link", Text("The link to choose a password", "رابط اختيار كلمة المرور")),
+            new("days", Text("How long the link works", "مدة صلاحية الرابط")),
+        ],
+        new Dictionary<string, object?>
+        {
+            ["recipient"] = new Dictionary<string, object?> { ["name"] = "Dana Dev", ["email"] = "dana@example.com", ["time_zone"] = "UTC" },
+            ["inviter"] = "Sam Admin",
+            ["username"] = "dana",
+            ["link"] = "https://example.com/reset-password#token=sample&invited=1",
+            ["days"] = 7,
         });
 }
 
@@ -403,7 +466,7 @@ public class SelfService(GuardDb guardDb, AccountProjector projector, IDataProte
         }
         catch (CryptographicException)
         {
-            throw new UserFriendlyException("This link doesn't work: it's wrong, used already, or more than an hour old. Ask for a new one.");
+            throw new UserFriendlyException(LinkGone);
         }
 
         string[] parts = payload.Split(':');
@@ -412,7 +475,7 @@ public class SelfService(GuardDb guardDb, AccountProjector projector, IDataProte
             DirectoryUser? user = parts.Length == 2 && Guid.TryParse(parts[0], out Guid id) ? await db.DirectoryUsers.FirstOrDefaultAsync(u => u.Id == id, ct) : null;
             if (user is null || Stamp(user) != parts[1] || !user.IsActive)
             {
-                throw new UserFriendlyException("This link doesn't work: it's wrong, used already, or more than an hour old. Ask for a new one.");
+                throw new UserFriendlyException(LinkGone);
             }
 
             user.PasswordHash = AuthService.HashPassword(user, password);
@@ -437,15 +500,66 @@ public class SelfService(GuardDb guardDb, AccountProjector projector, IDataProte
         return username;
     }
 
+    private const string LinkGone = "This link doesn't work: it's wrong, used already, or too old. Ask for a new one.";
+
+    /// <summary>
+    /// Mails the person of an account Guard keeps a link to choose a password: because an admin asked for a new one (the
+    /// current one keeps working until it's chosen), or as an invitation (an account with none yet). The same single-use
+    /// link as a person's own reset (spent once a password is set, an empty one's too), working longer:
+    /// Guard:Passwords:AdminResetHours and InvitationDays. Several links sent all work until a password is set.
+    /// </summary>
+    public async Task SendPasswordLinkAsync(Guid accountId, bool invitation, string? inviter, CancellationToken ct)
+    {
+        (DirectoryUser user, string address, string? language) = await guardDb.RunAsync(async db =>
+        {
+            Account account = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == accountId, ct)
+                ?? throw new Volo.Abp.Domain.Entities.EntityNotFoundException(typeof(Account), accountId);
+            DirectoryUser? user = account.DirectoryUserId is { } id ? await db.DirectoryUsers.AsNoTracking().FirstOrDefaultAsync(u => u.Id == id, ct) : null;
+            bool kept = user is not null && user.IsActive && user.PendingSince is null
+                && await db.Directories.AnyAsync(d => d.Id == user.DirectoryId && d.Type == GuardConstants.InternalType && d.IsActive, ct);
+            if (!kept)
+            {
+                throw new UserFriendlyException("This account's directory keeps its own passwords: set it there.", GuardErrorCodes.NotInternal);
+            }
+
+            string? address = account.MailTo ?? account.Email;
+            if (string.IsNullOrWhiteSpace(address))
+            {
+                throw new UserFriendlyException("This account has no address to mail a link to: add one first.", GuardErrorCodes.NoEmail);
+            }
+
+            return (user!, address, account.Language);
+        }, cancellationToken: ct);
+
+        GuardPasswordOptions passwords = options.Value.Passwords;
+        TimeSpan life = invitation ? passwords.InvitationFor : passwords.AdminResetFor;
+        string token = Resetter.Protect($"{user.Id:N}:{Stamp(user)}", life);
+        string lang = language ?? SiteLanguage;
+        string link = $"{GuardPageOptions.Link(Site, options.Value.Pages.PasswordReset, lang)}#token={token}{(invitation ? "&invited=1" : "")}";
+        Dictionary<string, object?> model = new() { ["username"] = user.Username, ["link"] = link };
+        if (invitation)
+        {
+            model["days"] = (int)life.TotalDays;
+            model["inviter"] = inviter ?? "An administrator";
+        }
+        else
+        {
+            model["hours"] = (int)life.TotalHours;
+        }
+
+        await messenger.SendAsync(new GuardMessage(invitation ? SelfServiceMail.Invitation : SelfServiceMail.PasswordSet, null, address, user.DisplayName, model,
+            lang, invitation ? "invitation" : "password-reset"), ct);
+    }
+
     private async Task SendAsync(string template, DirectoryUser user, Dictionary<string, object?> model, CancellationToken ct, string? to = null) =>
         await messenger.SendAsync(new GuardMessage(template, null, to ?? user.Email!, user.DisplayName, model,
             siteDefaults.RequestLanguage, template == SelfServiceMail.Verify ? "signup" : "password-reset"), ct);
 
-    private static void Password(string? password)
+    private void Password(string? password)
     {
-        if (string.IsNullOrEmpty(password) || password.Length < 10 || password.Length > 200)
+        if (options.Value.Passwords.Problem(password) is { } problem)
         {
-            throw new UserFriendlyException("Passwords need at least 10 characters.");
+            throw new UserFriendlyException(problem);
         }
     }
 

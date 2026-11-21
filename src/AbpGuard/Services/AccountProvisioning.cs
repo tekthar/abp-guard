@@ -40,9 +40,9 @@ public class AccountProvisioning(GuardDb guardDb, AccountProjector projector, IM
             throw new ArgumentException(Usernames.ReservedRule);
         }
 
-        if (password is not null && password.Length < 10)
+        if (password is not null && options.Value.Passwords.Problem(password) is { } problem)
         {
-            throw new ArgumentException("Passwords need at least 10 characters.");
+            throw new ArgumentException(problem);
         }
 
         string normalized = GuardConstants.Normalize(username);

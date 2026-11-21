@@ -85,6 +85,57 @@ public class AccountMergeService(GuardDb guardDb, IGuardExtensions extensions, I
     }
 
     /// <summary>
+    /// What in the host and its plugins holds the account (0.9.0): every merge participant's count of the account's rows
+    /// (asked with <see cref="Guid.Empty"/> as the survivor) and every <see cref="IAccountUsage"/>'s, the ones above zero.
+    /// A plugin that fails to answer holds it too: Guard can't tell it doesn't.
+    /// </summary>
+    public async Task<List<MergePartDto>> UsageAsync(Guid accountId, CancellationToken ct)
+    {
+        List<MergePartDto> parts = [];
+        await using (IGuardLease<IAccountMergeParticipant> lease = extensions.Lease<IAccountMergeParticipant>(services))
+        {
+            foreach ((string? plugin, IAccountMergeParticipant participant) in lease.Items)
+            {
+                string key = plugin ?? HostKey(participant);
+                try
+                {
+                    IReadOnlyList<AccountMergeCount> counts = await guardDb.RunAsync(_ => participant.PreviewAsync(accountId, Guid.Empty, ct), cancellationToken: ct);
+                    if (Dto(counts) is { Count: > 0 } held)
+                    {
+                        parts.Add(new MergePartDto(key, plugin is not null, held, null));
+                    }
+                }
+                catch (Exception ex) when (plugin is not null)
+                {
+                    parts.Add(new MergePartDto(key, true, [], ex.Message));
+                }
+            }
+        }
+
+        await using (IGuardLease<IAccountUsage> lease = extensions.Lease<IAccountUsage>(services))
+        {
+            foreach ((string? plugin, IAccountUsage usage) in lease.Items)
+            {
+                string key = plugin ?? ((usage.GetType().Namespace ?? "host").Split('.') is [_, var module, ..] ? module.ToLowerInvariant() : "host");
+                try
+                {
+                    IReadOnlyList<AccountMergeCount> counts = await guardDb.RunAsync(_ => usage.CountAsync(accountId, ct), cancellationToken: ct);
+                    if (Dto(counts) is { Count: > 0 } held)
+                    {
+                        parts.Add(new MergePartDto(key, plugin is not null, held, null));
+                    }
+                }
+                catch (Exception ex) when (plugin is not null)
+                {
+                    parts.Add(new MergePartDto(key, true, [], ex.Message));
+                }
+            }
+        }
+
+        return parts;
+    }
+
+    /// <summary>
     /// Merges source into survivor. Actor is the admin (null for an automatic merge); an active source needs confirm to be
     /// its username.
     /// </summary>

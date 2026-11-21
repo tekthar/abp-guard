@@ -20,7 +20,7 @@ namespace AbpGuard.Controllers;
 [Route("api/guard/accounts")]
 [Authorize]
 public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountProjector projector, AccountMergeService merges, AccountEmailService emails,
-    SecurityLog audit, AccountSessions sessions)
+    SecurityLog audit, AccountSessions sessions, Microsoft.Extensions.Options.IOptions<GuardOptions> options, SelfService self)
     : GuardControllerBase
 {
     /// <summary>The accounts the caller may read, by username, at most 500: what pickers search. A list that pages takes <see cref="Page"/>.</summary>
@@ -39,37 +39,74 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
     }
 
     /// <summary>
-    /// A page of the accounts the caller may read, in ABP's shape: <c>totalCount</c> and <c>items</c>, the list's search
-    /// and status, sorted by username, displayName, email, status, createdAt or lastLoginAt (username unless asked).
+    /// A page of the accounts the caller may read, in ABP's shape: <c>totalCount</c> and <c>items</c>, the list's search,
+    /// status and directory, sorted by username, displayName, email, status, directory, createdAt or lastLoginAt
+    /// (username unless asked), and grouped by status or directory with every group's total.
     /// </summary>
     [HttpGet("page")]
-    public async Task<PagedResultDto<AccountDto>> Page([FromQuery] AccountPageInput input, CancellationToken cancellationToken)
+    public async Task<GuardPagedResultDto<AccountDto>> Page([FromQuery] AccountPageInput input, CancellationToken cancellationToken)
     {
         Casl.Ability ability = await AbilityAsync(cancellationToken);
         Ensure(ability, "read", "Account");
+        string? sorting = GuardPaging.Grouped(input.GroupBy, input.Sorting, "status", "directory");
         return await guardDb.RunAsync(async db =>
         {
-            IQueryable<Account> query = Filtered(db, ability, input.Filter, input.Status);
+            IQueryable<Account> query = Filtered(db, ability, input.Filter, input.Status, input.DirectoryId);
             int total = await query.CountAsync(cancellationToken);
-            List<Account> page = await GuardPaging.Sort(query, input.Sorting, AccountSorts, "username", a => a.Id)
+            List<Account> page = await GuardPaging.Sort(query, sorting, AccountSorts(db), "username", a => a.Id)
                 .Skip(input.SkipCount).Take(input.MaxResultCount).ToListAsync(cancellationToken);
             Dictionary<Guid, string> directories = await db.Directories.ToDictionaryAsync(d => d.Id, d => d.Name, cancellationToken);
-            return new PagedResultDto<AccountDto>(total, page.Select(a => AccountDto.From(a, directories.GetValueOrDefault(a.DirectoryId, "?"))).ToList());
+            List<ListGroupDto>? groups = input.GroupBy?.Trim().ToLowerInvariant() switch
+            {
+                "status" => (await query.GroupBy(a => a.Status).Select(g => new { g.Key, Count = g.Count() }).ToListAsync(cancellationToken))
+                    .OrderBy(g => g.Key).Select(g => new ListGroupDto(g.Key.ToString(), g.Key.ToString(), g.Count)).ToList(),
+                "directory" => (await query.GroupBy(a => a.DirectoryId).Select(g => new { g.Key, Count = g.Count() }).ToListAsync(cancellationToken))
+                    .Select(g => new ListGroupDto(g.Key.ToString(), directories.GetValueOrDefault(g.Key, "?"), g.Count)).OrderBy(g => g.Label, StringComparer.Ordinal).ToList(),
+                _ => null,
+            };
+            return new GuardPagedResultDto<AccountDto>(total, page.Select(a => AccountDto.From(a, directories.GetValueOrDefault(a.DirectoryId, "?"))).ToList(), groups);
         }, cancellationToken: cancellationToken);
     }
 
-    private static readonly Dictionary<string, System.Linq.Expressions.LambdaExpression> AccountSorts = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>
+    /// Every account the list would show (its search, status, directory and sorting), as CSV, at most 100,000 rows. A
+    /// list of people is personal data: a step-up first, and the export is in the security log with its filters.
+    /// </summary>
+    [HttpGet("export")]
+    [StepUp(StepUpCategories.Exports)]
+    public async Task<FileContentResult> Export([FromQuery] AccountPageInput input, CancellationToken cancellationToken)
+    {
+        Casl.Ability ability = await AbilityAsync(cancellationToken);
+        Ensure(ability, "read", "Account");
+        string? sorting = GuardPaging.Grouped(input.GroupBy, input.Sorting, "status", "directory");
+        byte[] csv = await guardDb.RunAsync(async db =>
+        {
+            List<Account> rows = await GuardPaging.Sort(Filtered(db, ability, input.Filter, input.Status, input.DirectoryId), sorting, AccountSorts(db), "username", a => a.Id)
+                .Take(GuardCsv.MaxRows).ToListAsync(cancellationToken);
+            Dictionary<Guid, string> directories = await db.Directories.ToDictionaryAsync(d => d.Id, d => d.Name, cancellationToken);
+            audit.Add(db, SecurityAuditTypes.AccountsExported, new AuditTarget("Account", null, "accounts"),
+                new { filter = input.Filter, status = input.Status, directoryId = input.DirectoryId, sorting, rows = rows.Count });
+            await db.SaveChangesAsync(cancellationToken);
+            return GuardCsv.Write(["Username", "Display name", "Email", "Directory", "Status", "Last sign-in", "Created"],
+                rows.Select(a => (IReadOnlyList<string?>)[a.Username, a.DisplayName, a.MailTo ?? a.Email, directories.GetValueOrDefault(a.DirectoryId), a.Status.ToString(),
+                    GuardCsv.Time(a.LastLoginAt), GuardCsv.Time(a.CreatedAt)]));
+        }, requiresNew: true, cancellationToken, isTransactional: true);
+        return File(csv, "text/csv; charset=utf-8", $"accounts-{DateTime.UtcNow:yyyy-MM-dd}.csv");
+    }
+
+    private static Dictionary<string, System.Linq.Expressions.LambdaExpression> AccountSorts(GuardDbContext db) => new(StringComparer.OrdinalIgnoreCase)
     {
         ["username"] = GuardPaging.By<Account, string>(a => a.Username),
         ["displayName"] = GuardPaging.By<Account, string>(a => a.DisplayName),
         ["email"] = GuardPaging.By<Account, string?>(a => a.Email),
         ["status"] = GuardPaging.By<Account, AccountStatus>(a => a.Status),
+        ["directory"] = GuardPaging.By<Account, string?>(a => db.Directories.Where(d => d.Id == a.DirectoryId).Select(d => d.Name).FirstOrDefault()),
         ["createdAt"] = GuardPaging.By<Account, DateTime>(a => a.CreatedAt),
         ["lastLoginAt"] = GuardPaging.By<Account, DateTime?>(a => a.LastLoginAt),
     };
 
-    /// <summary>The accounts the ability may read (filtered in SQL), with the list's search and status.</summary>
-    private static IQueryable<Account> Filtered(GuardDbContext db, Casl.Ability ability, string? search, string? status)
+    /// <summary>The accounts the ability may read (filtered in SQL), with the list's search, status and directory.</summary>
+    private static IQueryable<Account> Filtered(GuardDbContext db, Casl.Ability ability, string? search, string? status, Guid? directoryId = null)
     {
         IQueryable<Account> query = db.Accounts.AsNoTracking().AccessibleBy(ability, "read");
         if (!string.IsNullOrWhiteSpace(search))
@@ -81,6 +118,11 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
         if (Enum.TryParse(status, ignoreCase: true, out AccountStatus parsed))
         {
             query = query.Where(a => a.Status == parsed);
+        }
+
+        if (directoryId is { } directory)
+        {
+            query = query.Where(a => a.DirectoryId == directory);
         }
 
         return query;
@@ -126,6 +168,9 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
         // As EnsureNotAnAdminAsync: only a site admin locks, unlocks or resets the factors of another site admin.
         bool anotherAdmin = !admin && await HttpContext.RequestServices.GetRequiredService<AbilityFactory>().HoldsAdminRightsAsync(account.Id, cancellationToken);
         bool merge = features.Merges && ability.Can("merge", account) && (admin || !await HoldsRightsOfItsOwnAsync(account.Id, cancellationToken));
+        bool self = account.Id == CurrentAccountId;
+        bool settled = account.MergedIntoId is null && account.ErasedAt is null;
+        (bool keptByGuard, bool onlyGuards) = await KeptByGuardAsync(account, cancellationToken);
         return new AccountCanDto(
             Update: ability.Can("update", account),
             Lock: !anotherAdmin && ability.Can("lock", account),
@@ -133,8 +178,30 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
             Merge: merge,
             ResetSecondFactor: features.TwoFactor && !anotherAdmin && ability.Can("reset-second-factor", account),
             Erase: admin && features.Erasure,
-            ExportData: admin && features.DataExport);
+            ExportData: admin && features.DataExport)
+        {
+            Deactivate = settled && !self && !account.IsAgent && !anotherAdmin && ability.Can("deactivate", account),
+            Activate = settled && !account.IsAgent && !anotherAdmin && ability.Can("activate", account),
+            ResetPassword = settled && !account.IsService && !anotherAdmin && keptByGuard && (account.MailTo ?? account.Email) is { Length: > 0 }
+                && ability.Can("reset-password", account),
+            Delete = settled && !self && !account.IsService && account.LastLoginAt is null && onlyGuards && ability.Can("delete", account),
+        };
     }
+
+    /// <summary>
+    /// Whether Guard keeps the account's winning record (an internal directory's, so a password is Guard's to set), and
+    /// whether every record with its username is Guard's (no directory would bring it back after a delete).
+    /// </summary>
+    private Task<(bool KeptByGuard, bool OnlyGuards)> KeptByGuardAsync(Account account, CancellationToken cancellationToken) =>
+        guardDb.RunAsync(async db =>
+        {
+            var records = await db.DirectoryUsers.AsNoTracking()
+                .Where(u => u.NormalizedUsername == account.NormalizedUsername)
+                .Join(db.Directories, u => u.DirectoryId, d => d.Id, (u, d) => new { u.Id, u.IsActive, Internal = d.Type == GuardConstants.InternalType })
+                .ToListAsync(cancellationToken);
+            bool kept = records.Any(r => r.Id == account.DirectoryUserId && r.Internal && r.IsActive);
+            return (kept, records.All(r => r.Internal));
+        }, cancellationToken: cancellationToken);
 
     /// <summary>Whether the account has roles or groups of its own (granted to it, not from a directory): only an admin merges it.</summary>
     private Task<bool> HoldsRightsOfItsOwnAsync(Guid accountId, CancellationToken cancellationToken) =>
@@ -158,9 +225,9 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
         }
 
         Usernames.EnsureNotReserved(input.Username, input.DisplayName);
-        if (string.IsNullOrEmpty(input.Password) || input.Password.Length < 10)
+        if (options.Value.Passwords.Problem(input.Password) is { } problem)
         {
-            throw new UserFriendlyException("Passwords need at least 10 characters.");
+            throw new UserFriendlyException(problem);
         }
 
         string normalized = GuardConstants.Normalize(input.Username);
@@ -211,6 +278,19 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
     [HttpPost("{id:guid}/unlock")]
     [StepUp(StepUpCategories.Accounts)]
     public Task<AccountDto> Unlock(Guid id, CancellationToken cancellationToken) => SetLockedAsync(id, locked: false, cancellationToken);
+
+    /// <summary>
+    /// Deactivates an account: the person left. Inactive whatever its directory says, until activated again; its sessions
+    /// end, and its tokens stop working with it. A lock is for a hold on someone still here.
+    /// </summary>
+    [HttpPost("{id:guid}/deactivate")]
+    [StepUp(StepUpCategories.Accounts)]
+    public Task<AccountDto> Deactivate(Guid id, CancellationToken cancellationToken) => SetDeactivatedAsync(id, deactivated: true, cancellationToken);
+
+    /// <summary>Activates a deactivated account again: it's Active once its directory says so too.</summary>
+    [HttpPost("{id:guid}/activate")]
+    [StepUp(StepUpCategories.Accounts)]
+    public Task<AccountDto> Activate(Guid id, CancellationToken cancellationToken) => SetDeactivatedAsync(id, deactivated: false, cancellationToken);
 
     /// <summary>A person's second factors as an admin sees them: what their groups ask, what they set up, the recovery codes left.</summary>
     [HttpGet("{id:guid}/second-factors")]
@@ -296,6 +376,319 @@ public class AccountsController(GuardDb guardDb, MembershipGraph graph, AccountP
         if (locked)
         {
             await sessions.EndEverywhereAsync(id, keepSession: null, keepAuthorization: null, "locked", cancellationToken);
+        }
+
+        await PublishAsync(events);
+        return dto;
+    }
+
+    // ---- Passwords, invitations, deleting an unused account (0.9.0) ----
+
+    /// <summary>
+    /// Mails the person a link to choose a new password, for an account whose directory Guard keeps. The current one keeps
+    /// working until they do; the link works Guard:Passwords:AdminResetHours (24 by default).
+    /// </summary>
+    [HttpPost("{id:guid}/password-reset")]
+    [StepUp(StepUpCategories.Accounts)]
+    public async Task<NoContentResult> ResetPassword(Guid id, CancellationToken cancellationToken)
+    {
+        Casl.Ability ability = await AbilityAsync(cancellationToken);
+        Account account = await AccountAsync(id, cancellationToken);
+        Ensure(ability, "reset-password", account);
+        await EnsureNotAnAdminAsync(ability, id, "reset the password of", cancellationToken);
+        EnsurePerson(account);
+        await self.SendPasswordLinkAsync(id, invitation: false, inviter: null, cancellationToken);
+        await AuditAsync(SecurityAuditTypes.PasswordResetSent, account, null, cancellationToken);
+        return NoContent();
+    }
+
+    /// <summary>People to invite: an address each, and their name if it's known; the directory they join (an internal one).</summary>
+    public sealed record InvitationInput(List<InvitePersonInput> People, Guid? DirectoryId = null);
+
+    public sealed record InvitePersonInput(string Email, string? DisplayName = null);
+
+    /// <summary>Who was invited, and the addresses refused (with why): one refused doesn't stop the others.</summary>
+    public sealed record InvitationResultDto(List<AccountDto> Invited, List<InvitationRefusedDto> Refused);
+
+    public sealed record InvitationRefusedDto(string Email, string Reason);
+
+    /// <summary>
+    /// Invites people, at most 50 a call: each gets an account in an internal directory (Guard's own by default) with no
+    /// password, its username from the address (made unique), and a mailed link to choose a password that works
+    /// Guard:Passwords:InvitationDays (7 by default). The account shows as invited until they first sign in.
+    /// </summary>
+    [HttpPost("invitations")]
+    [StepUp(StepUpCategories.Accounts)]
+    public async Task<InvitationResultDto> Invite([FromBody] InvitationInput input, CancellationToken cancellationToken)
+    {
+        Ensure(await AbilityAsync(cancellationToken), "create", "Account");
+        if (input.People is not { Count: > 0 and <= 50 })
+        {
+            throw new UserFriendlyException("Invite 1 to 50 people at a time.");
+        }
+
+        Guid directoryId = input.DirectoryId ?? GuardConstants.InternalDirectoryId;
+        string inviter = await InviterAsync(cancellationToken);
+        List<AccountDto> invited = [];
+        List<InvitationRefusedDto> refused = [];
+        HashSet<string> seen = [];
+        foreach (InvitePersonInput person in input.People)
+        {
+            string email = (person.Email ?? "").Trim();
+            string normalized = GuardConstants.Normalize(email);
+            if (!LooksLikeAnAddress(email))
+            {
+                refused.Add(new(email, "This isn't an email address."));
+                continue;
+            }
+
+            if (!seen.Add(normalized))
+            {
+                refused.Add(new(email, "This address is listed twice."));
+                continue;
+            }
+
+            (AccountDto? dto, string? why, List<object> events) = await guardDb.RunAsync(async db =>
+            {
+                UserDirectory directory = await db.Directories.FirstOrDefaultAsync(d => d.Id == directoryId, cancellationToken)
+                    ?? throw new UserFriendlyException("There's no such directory.");
+                if (!directory.IsInternal || !directory.IsActive)
+                {
+                    throw new UserFriendlyException($"{directory.Name} keeps its own users: invite people to an internal directory.");
+                }
+
+                if (await Addresses.ActiveWithAddress(db, normalized).AnyAsync(cancellationToken))
+                {
+                    return ((AccountDto?)null, "Someone already has an account with this address.", new List<object>());
+                }
+
+                string local = email[..email.IndexOf('@')];
+                string username = await FreeUsernameAsync(db, local, cancellationToken);
+                string name = string.IsNullOrWhiteSpace(person.DisplayName) ? local : DisplayNames.Check(person.DisplayName.Trim());
+                Usernames.EnsureNotReserved(username, name);
+                string key = GuardConstants.Normalize(username);
+                db.DirectoryUsers.Add(new DirectoryUser(Guid.NewGuid(), directoryId, $"internal:{key}", username) { DisplayName = name, Email = email });
+                await db.SaveChangesAsync(cancellationToken);
+                List<object> events = await projector.RebuildAsync(db, [key], cancellationToken);
+                await db.SaveChangesAsync(cancellationToken);
+                Account account = await db.Accounts.FirstAsync(a => a.NormalizedUsername == key, cancellationToken);
+                (account.InvitedAt, account.InvitedBy) = (DateTime.UtcNow, CurrentAccountId);
+                await db.SaveChangesAsync(cancellationToken);
+                await Organizations.ApplyDomainsAsync(db, cancellationToken);
+                audit.Add(db, SecurityAuditTypes.AccountInvited, Target(account), new { directory = directory.Name });
+                await db.SaveChangesAsync(cancellationToken);
+                return (AccountDto.From(account, directory.Name), (string?)null, events);
+            }, requiresNew: true, cancellationToken, isTransactional: true);
+
+            if (dto is null)
+            {
+                refused.Add(new(email, why!));
+                continue;
+            }
+
+            await PublishAsync(events);
+            await self.SendPasswordLinkAsync(dto.Id, invitation: true, inviter, cancellationToken);
+            invited.Add(dto);
+        }
+
+        return new InvitationResultDto(invited, refused);
+    }
+
+    /// <summary>Sends an invitation again, with a new link: for an account invited and not signed in yet.</summary>
+    [HttpPost("{id:guid}/invitation")]
+    [StepUp(StepUpCategories.Accounts)]
+    public async Task<NoContentResult> Reinvite(Guid id, CancellationToken cancellationToken)
+    {
+        Ensure(await AbilityAsync(cancellationToken), "create", "Account");
+        Account account = await AccountAsync(id, cancellationToken);
+        if (account.InvitedAt is null || account.LastLoginAt is not null)
+        {
+            throw new UserFriendlyException("This account isn't waiting on an invitation.", GuardErrorCodes.Conflict);
+        }
+
+        await self.SendPasswordLinkAsync(id, invitation: true, await InviterAsync(cancellationToken), cancellationToken);
+        await AuditAsync(SecurityAuditTypes.AccountInvited, account, new { again = true }, cancellationToken);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Deletes an account nobody has used yet: never signed in, kept by no directory but Guard's own, no service account,
+    /// in no merge, and held by nothing in the host or its plugins (what a merge would move, and any usage counter). Its
+    /// groups, roles, addresses and factors go with it; the security log keeps that it was deleted. Anything else is
+    /// refused: history that names an account would read as an unknown person, so a used one is deactivated instead.
+    /// This is also how an invitation is cancelled.
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    [StepUp(StepUpCategories.Accounts)]
+    public async Task<NoContentResult> Delete(Guid id, CancellationToken cancellationToken)
+    {
+        if (id == CurrentAccountId)
+        {
+            throw new UserFriendlyException("You can't delete your own account.");
+        }
+
+        Casl.Ability ability = await AbilityAsync(cancellationToken);
+        Account account = await AccountAsync(id, cancellationToken);
+        Ensure(ability, "delete", account);
+        await EnsureNotAnAdminAsync(ability, id, "delete", cancellationToken);
+        EnsurePerson(account);
+        if (account.MergedIntoId is not null || account.ErasedAt is not null)
+        {
+            throw new UserFriendlyException("This account was merged or erased: it stays as it is.", GuardErrorCodes.Conflict);
+        }
+
+        if (account.LastLoginAt is not null)
+        {
+            throw new UserFriendlyException("This account has signed in, so it has a history: deactivate it instead.", GuardErrorCodes.AccountSignedIn);
+        }
+
+        if (!(await KeptByGuardAsync(account, cancellationToken)).OnlyGuards)
+        {
+            throw new UserFriendlyException("A directory keeps this account, so it would come back on the next sync: deactivate it there.", GuardErrorCodes.AccountSynced);
+        }
+
+        List<MergePartDto> held = await merges.UsageAsync(id, cancellationToken);
+        if (held.Count > 0 || await guardDb.RunAsync(db => db.Merges.AnyAsync(m => m.SourceId == id || m.SurvivorId == id, cancellationToken), cancellationToken: cancellationToken))
+        {
+            throw InUse(held);
+        }
+
+        try
+        {
+            await guardDb.RunAsync(async db =>
+            {
+                List<Guid> records = await db.DirectoryUsers.Where(u => u.NormalizedUsername == account.NormalizedUsername).Select(u => u.Id).ToListAsync(cancellationToken);
+                await db.Memberships.Where(m => (m.MemberType == MemberType.Account && m.MemberId == id)
+                    || (m.MemberType == MemberType.DirectoryUser && records.Contains(m.MemberId))).ExecuteDeleteAsync(cancellationToken);
+                await db.RoleGrants.Where(g => g.PrincipalType == PrincipalType.Account && g.PrincipalId == id).ExecuteDeleteAsync(cancellationToken);
+                await db.PersonalAccessTokens.Where(t => t.AccountId == id).ExecuteDeleteAsync(cancellationToken);
+                await db.SecondFactors.Where(f => f.AccountId == id).ExecuteDeleteAsync(cancellationToken);
+                await db.Passkeys.Where(p => p.AccountId == id).ExecuteDeleteAsync(cancellationToken);
+                await db.PasskeyChallenges.Where(c => c.AccountId == id).ExecuteDeleteAsync(cancellationToken);
+                await db.RecoveryCodes.Where(c => c.AccountId == id).ExecuteDeleteAsync(cancellationToken);
+                await db.SentCodes.Where(c => c.AccountId == id).ExecuteDeleteAsync(cancellationToken);
+                await db.SignInTickets.Where(t => t.AccountId == id).ExecuteDeleteAsync(cancellationToken);
+                await db.SessionHandoffs.Where(h => h.AccountId == id).ExecuteDeleteAsync(cancellationToken);
+                await db.WebSessions.Where(s => s.AccountId == id).ExecuteDeleteAsync(cancellationToken);
+                await db.AccountEmails.Where(e => e.AccountId == id).ExecuteDeleteAsync(cancellationToken);
+                await db.DirectoryUsers.Where(u => records.Contains(u.Id)).ExecuteDeleteAsync(cancellationToken);
+                await db.Accounts.Where(a => a.Id == id).ExecuteDeleteAsync(cancellationToken);
+                audit.Add(db, SecurityAuditTypes.AccountDeleted, Target(account));
+                await db.SaveChangesAsync(cancellationToken);
+            }, requiresNew: true, cancellationToken, isTransactional: true);
+        }
+        catch (Exception ex) when (IsForeignKey(ex))
+        {
+            // The host's database still names the account somewhere nothing counted: kept, as if a count had said so.
+            throw InUse([]);
+        }
+
+        return NoContent();
+    }
+
+    private static UserFriendlyException InUse(List<MergePartDto> held)
+    {
+        UserFriendlyException refused = new("Something still holds this account, so its history would lose who it was: deactivate it instead.", GuardErrorCodes.AccountInUse);
+        refused.Data["parts"] = held.Select(p => new { p.Key, p.Plugin, Counts = p.Counts.Select(c => new { c.Key, c.Count, c.Label }), p.Error }).ToList();
+        return refused;
+    }
+
+    /// <summary>A foreign key refused the delete (Postgres 23503), however deep the provider wrapped it.</summary>
+    private static bool IsForeignKey(Exception ex)
+    {
+        for (Exception? e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is Npgsql.PostgresException { SqlState: "23503" })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>A person's action, never a service account's (an agent's, managed where it was made).</summary>
+    private static void EnsurePerson(Account account)
+    {
+        if (account.IsService)
+        {
+            throw new UserFriendlyException("A service account is managed where it was made, not here.", GuardErrorCodes.ServiceAccount);
+        }
+    }
+
+    private async Task<string> InviterAsync(CancellationToken cancellationToken) =>
+        await guardDb.RunAsync(db => db.Accounts.Where(a => a.Id == CurrentAccountId).Select(a => a.DisplayName).FirstOrDefaultAsync(cancellationToken), cancellationToken: cancellationToken)
+        ?? "An administrator";
+
+    private Task AuditAsync(string type, Account account, object? detail, CancellationToken cancellationToken) => guardDb.RunAsync(async db =>
+    {
+        audit.Add(db, type, Target(account), detail);
+        await db.SaveChangesAsync(cancellationToken);
+    }, requiresNew: true, cancellationToken, isTransactional: true);
+
+    /// <summary>A username from an address's local part that no directory and no account has: sara, sara2, sara3…</summary>
+    private static async Task<string> FreeUsernameAsync(GuardDbContext db, string local, CancellationToken cancellationToken)
+    {
+        string stem = new string(local.Where(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_').ToArray()).Trim('.', '-', '_');
+        stem = stem.Length < 2 ? "user" : stem[..Math.Min(stem.Length, 60)];
+        for (int n = 1; ; n++)
+        {
+            string candidate = n == 1 ? stem : $"{stem}{n}";
+            string key = GuardConstants.Normalize(candidate);
+            if (!Usernames.IsReserved(candidate)
+                && !await db.DirectoryUsers.AnyAsync(u => u.NormalizedUsername == key, cancellationToken)
+                && !await db.Accounts.AnyAsync(a => a.NormalizedUsername == key, cancellationToken))
+            {
+                return candidate;
+            }
+        }
+    }
+
+    private static bool LooksLikeAnAddress(string email) =>
+        email.Length is > 2 and <= 254 && email.IndexOf('@') is > 0 and var at && at < email.Length - 1 && email.IndexOf('@', at + 1) < 0
+        && !email.Any(char.IsWhiteSpace);
+
+    private async Task<AccountDto> SetDeactivatedAsync(Guid id, bool deactivated, CancellationToken cancellationToken)
+    {
+        if (deactivated && id == CurrentAccountId)
+        {
+            throw new UserFriendlyException("You can't deactivate your own account.");
+        }
+
+        Casl.Ability ability = await AbilityAsync(cancellationToken);
+        await EnsureNotAnAdminAsync(ability, id, deactivated ? "deactivate" : "activate", cancellationToken);
+        (AccountDto dto, List<object> events) = await guardDb.RunAsync(async db =>
+        {
+            Account account = await db.Accounts.FirstOrDefaultAsync(a => a.Id == id, cancellationToken)
+                ?? throw new EntityNotFoundException(typeof(Account), id);
+            Ensure(ability, deactivated ? "deactivate" : "activate", account);
+            if (account.IsAgent)
+            {
+                throw new UserFriendlyException("An agent is paused where it's managed, not here.", GuardErrorCodes.ServiceAccount);
+            }
+
+            if (account.MergedIntoId is not null || account.ErasedAt is not null)
+            {
+                throw new UserFriendlyException("This account was merged or erased: it stays as it is.", GuardErrorCodes.Conflict);
+            }
+
+            if (account.DeactivatedLocally != deactivated)
+            {
+                audit.Add(db, deactivated ? SecurityAuditTypes.AccountDeactivated : SecurityAuditTypes.AccountActivated, Target(account));
+            }
+
+            account.DeactivatedLocally = deactivated;
+            await db.SaveChangesAsync(cancellationToken);
+            List<object> events = await projector.RebuildAsync(db, [account.NormalizedUsername], cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            string directoryName = await db.Directories.Where(d => d.Id == account.DirectoryId).Select(d => d.Name).FirstAsync(cancellationToken);
+            return (AccountDto.From(account, directoryName), events);
+        }, requiresNew: true, cancellationToken, isTransactional: true);
+
+        // As a lock: what was signed in ends (browsers, the phone, scripts); personal tokens and apps stop with the account.
+        if (deactivated)
+        {
+            await sessions.EndEverywhereAsync(id, keepSession: null, keepAuthorization: null, "deactivated", cancellationToken);
         }
 
         await PublishAsync(events);

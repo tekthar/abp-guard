@@ -81,8 +81,11 @@ public class AccountProjector(Microsoft.Extensions.Options.IOptions<GuardOptions
                 continue;
             }
 
-            orphan.Status = orphan.LockedLocally ? AccountStatus.Locked : AccountStatus.Inactive;
-            orphan.StatusReason = orphan.LockedLocally ? $"Locked in {Product}" : "Not found in any active directory";
+            (orphan.Status, orphan.StatusReason) = orphan.DeactivatedLocally
+                ? (AccountStatus.Inactive, $"Deactivated in {Product}")
+                : orphan.LockedLocally
+                    ? (AccountStatus.Locked, $"Locked in {Product}")
+                    : (AccountStatus.Inactive, "Not found in any active directory");
             AddStatusEvents(events, orphan, before);
         }
 
@@ -120,11 +123,14 @@ public class AccountProjector(Microsoft.Extensions.Options.IOptions<GuardOptions
             return;
         }
 
-        (account.Status, account.StatusReason) = account.LockedLocally
-            ? (AccountStatus.Locked, $"Locked in {product}")
-            : winner.IsActive
-                ? (AccountStatus.Active, null)
-                : (AccountStatus.Inactive, $"Disabled in {directory.Name}");
+        // Deactivated (the person left) before locked (a hold on someone still here): both stop sign-in.
+        (account.Status, account.StatusReason) = account.DeactivatedLocally
+            ? (AccountStatus.Inactive, $"Deactivated in {product}")
+            : account.LockedLocally
+                ? (AccountStatus.Locked, $"Locked in {product}")
+                : winner.IsActive
+                    ? (AccountStatus.Active, null)
+                    : (AccountStatus.Inactive, $"Disabled in {directory.Name}");
     }
 
     private static void AddStatusEvents(List<object> events, Account account, AccountStatus before)

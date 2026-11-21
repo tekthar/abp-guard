@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -32,21 +33,59 @@ public class GroupsController(GuardDb guardDb, MembershipGraph graph, SecurityLo
     /// sorted by name, kind or directory (its name; name unless asked).
     /// </summary>
     [HttpGet("page")]
-    public Task<PagedResultDto<GroupDto>> Page([FromQuery] GroupPageInput input, CancellationToken cancellationToken) =>
-        guardDb.RunAsync(async db =>
+    public Task<GuardPagedResultDto<GroupDto>> Page([FromQuery] GroupPageInput input, CancellationToken cancellationToken)
+    {
+        string? sorting = GuardPaging.Grouped(input.GroupBy, input.Sorting, "kind", "directory");
+        return guardDb.RunAsync(async db =>
         {
             IQueryable<Group> query = Filtered(db, input.Filter, input.DirectoryId, input.Kind);
             int total = await query.CountAsync(cancellationToken);
-            Dictionary<string, System.Linq.Expressions.LambdaExpression> sorts = new(StringComparer.OrdinalIgnoreCase)
-            {
-                ["name"] = GuardPaging.By<Group, string>(g => g.Name),
-                ["kind"] = GuardPaging.By<Group, string>(g => g.Kind),
-                ["directory"] = GuardPaging.By<Group, string?>(g => db.Directories.Where(d => d.Id == g.DirectoryId).Select(d => d.Name).FirstOrDefault()),
-            };
-            List<Group> groups = await GuardPaging.Sort(query, input.Sorting, sorts, "name", g => g.Id)
+            List<Group> groups = await GuardPaging.Sort(query, sorting, Sorts(db), "name", g => g.Id)
                 .Skip(input.SkipCount).Take(input.MaxResultCount).ToListAsync(cancellationToken);
-            return new PagedResultDto<GroupDto>(total, await ToDtosAsync(db, groups, cancellationToken));
+            List<ListGroupDto>? totals = input.GroupBy?.Trim().ToLowerInvariant() switch
+            {
+                "kind" => (await query.GroupBy(g => g.Kind).Select(g => new { g.Key, Count = g.Count() }).ToListAsync(cancellationToken))
+                    .OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => new ListGroupDto(g.Key, g.Key, g.Count)).ToList(),
+                "directory" => await DirectoryTotalsAsync(db, query, cancellationToken),
+                _ => null,
+            };
+            return new GuardPagedResultDto<GroupDto>(total, await ToDtosAsync(db, groups, cancellationToken), totals);
         }, cancellationToken: cancellationToken);
+    }
+
+    /// <summary>Every group the list would show (its search, directory, kind and sorting), as CSV, at most 100,000 rows; in the security log.</summary>
+    [HttpGet("export")]
+    [StepUp(StepUpCategories.Exports)]
+    public async Task<FileContentResult> Export([FromQuery] GroupPageInput input, CancellationToken cancellationToken)
+    {
+        string? sorting = GuardPaging.Grouped(input.GroupBy, input.Sorting, "kind", "directory");
+        byte[] csv = await guardDb.RunAsync(async db =>
+        {
+            List<Group> rows = await GuardPaging.Sort(Filtered(db, input.Filter, input.DirectoryId, input.Kind), sorting, Sorts(db), "name", g => g.Id)
+                .Take(GuardCsv.MaxRows).ToListAsync(cancellationToken);
+            Dictionary<Guid, string> directories = await db.Directories.ToDictionaryAsync(d => d.Id, d => d.Name, cancellationToken);
+            HttpContext.RequestServices.GetRequiredService<SecurityLog>().Add(db, SecurityAuditTypes.GroupsExported, new AuditTarget("Group", null, "groups"),
+                new { filter = input.Filter, directoryId = input.DirectoryId, kind = input.Kind, sorting, rows = rows.Count });
+            await db.SaveChangesAsync(cancellationToken);
+            return GuardCsv.Write(["Name", "Kind", "Directory", "Description"],
+                rows.Select(g => (IReadOnlyList<string?>)[g.Name, g.Kind, directories.GetValueOrDefault(g.DirectoryId), g.Description]));
+        }, requiresNew: true, cancellationToken, isTransactional: true);
+        return File(csv, "text/csv; charset=utf-8", $"groups-{DateTime.UtcNow:yyyy-MM-dd}.csv");
+    }
+
+    private static Dictionary<string, System.Linq.Expressions.LambdaExpression> Sorts(GuardDbContext db) => new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["name"] = GuardPaging.By<Group, string>(g => g.Name),
+        ["kind"] = GuardPaging.By<Group, string>(g => g.Kind),
+        ["directory"] = GuardPaging.By<Group, string?>(g => db.Directories.Where(d => d.Id == g.DirectoryId).Select(d => d.Name).FirstOrDefault()),
+    };
+
+    private static async Task<List<ListGroupDto>> DirectoryTotalsAsync(GuardDbContext db, IQueryable<Group> query, CancellationToken cancellationToken)
+    {
+        Dictionary<Guid, string> directories = await db.Directories.ToDictionaryAsync(d => d.Id, d => d.Name, cancellationToken);
+        return (await query.GroupBy(g => g.DirectoryId).Select(g => new { g.Key, Count = g.Count() }).ToListAsync(cancellationToken))
+            .Select(g => new ListGroupDto(g.Key.ToString(), directories.GetValueOrDefault(g.Key, "?"), g.Count)).OrderBy(g => g.Label, StringComparer.Ordinal).ToList();
+    }
 
     /// <summary>The groups with the list's search, directory and kind.</summary>
     private static IQueryable<Group> Filtered(GuardDbContext db, string? search, Guid? directoryId, string? kind)

@@ -67,6 +67,11 @@ public class SelfServiceController(SelfService self, SelfServiceLimiter limiter,
         return new { username };
     }
 
+    /// <summary>What a password must be (Guard:Passwords), so a screen states the rule the server keeps.</summary>
+    [AllowAnonymous]
+    [HttpGet("password/policy")]
+    public PasswordPolicyDto Policy() => new(options.Value.Passwords.Min, options.Value.Passwords.Max);
+
     /// <summary>Mails a reset link if an account Guard keeps has this email. Always the same answer.</summary>
     [AllowAnonymous]
     [HttpPost("password/forgot")]

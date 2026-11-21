@@ -6,6 +6,61 @@ change the API.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-21
+
+The people actions a site's admin screens need: deactivating someone who left, deleting an account nobody used,
+mailing a link to choose a password, invitations, giving anonymous visitors a role in a place the host lists, and lists
+that filter by directory, group with true totals and export. One migration (`PeopleActions`: three columns on
+`guard.accounts`, all defaulted); run it as every Guard migration is run. AbpConnections moves to 0.9.0 with the other
+packages, unchanged.
+
+### Added
+
+- **Deactivate and activate:** `POST /accounts/{id}/deactivate` and `/activate` (strong step-up, as lock). A deactivated
+  account is Inactive whatever its directory says, its reason "Deactivated in {product}", until activated; its sessions
+  end as a lock's do, and its tokens stop with it. Lock is a hold on someone still here; deactivate is someone who left.
+  Refused on yourself and on an agent's account (paused its own way); a site admin's only by a site admin.
+- **Delete an unused account:** `DELETE /accounts/{id}`, only for an account that never signed in, that no directory but
+  Guard's own keeps, that took no part in a merge, isn't a service account, and that nothing in the host or its plugins
+  holds: what a merge would move is asked of every `IAccountMergeParticipant` (with `Guid.Empty` as the survivor), and
+  more of any new `IAccountUsage`. Its groups, roles, addresses and factors go with it; the security log keeps
+  `account.deleted`. Anything else is a 409 (`account_signed_in`, `account_synced`, `account_in_use` with the counts that
+  hold it, or a foreign key the host's database still has): deactivate it instead, since history that names an account
+  would read as an unknown person. Deleting is also how an invitation is cancelled.
+- **An admin's password link:** `POST /accounts/{id}/password-reset` mails the person a link to choose a new password
+  (mail kind `guard.password-set`), for an account whose directory Guard keeps; the current password works until then.
+  The link is the self-service reset's, single use, and works `Passwords:AdminResetHours` (24). 409 `no_email` or
+  `not_internal`.
+- **Invitations:** `POST /accounts/invitations` (at most 50 people a call): each gets an account in an internal directory
+  with no password, a username from the address made unique, and a link to choose one (mail kind `guard.invitation`),
+  which works `Passwords:InvitationDays` (7). An address someone has, one listed twice or one that isn't an address is
+  refused for that row alone. `POST /accounts/{id}/invitation` sends it again; every link sent works until a password is
+  set. `AccountDto.invited` is true until they first sign in.
+- **A role for anonymous visitors in a place:** a host lists its places and the roles that suit each through
+  `IGrantScopeCatalog` (purpose `anonymous`); `GET /anonymous/places` lists them, `POST /anonymous` gives one and
+  `PUT /anonymous/{grantId}` changes its role in one step (Roles step-up). A role is given only when each of its allow
+  rules keeps to the place: the place's `${grant.*}` at the top of its conditions (never only under `$or`, `$nor` or
+  `$not`), only subjects the place opens, never Guard's own (people, groups, directories, roles) or `all`, never
+  `manage`; 409 `role_given_to_anonymous` otherwise. `AnonymousGrantDto` gains `code` and `roleId`;
+  `GrantScopeLabel.Code` is new.
+- **Lists:** `GET /accounts/page` takes `DirectoryId`, sorts by `directory`, and both it and `GET /groups/page` take
+  `GroupBy` (`status`/`directory`, `kind`/`directory`): the rows come sorted by the group, and `groups` holds every
+  group's total under the same filters. `GET /accounts/export` and `GET /groups/export` give the same rows as CSV (at
+  most 100,000; UTF-8 with a byte-order mark; a cell that starts like a formula behind a `'`), after the Exports step-up,
+  each export in the security log with its filters and row count.
+- `AccountCanDto` gains `deactivate`, `activate`, `resetPassword` and `delete`; `AccountDto` gains `invited` and
+  `createdAt`.
+- `Guard:Passwords`: `MinLength` (10, never under 8), `MaxLength` (200), `AdminResetHours`, `InvitationDays`; every
+  place that takes a password checks the one rule, and `GET /password/policy` tells screens it.
+- Error codes answered 409: `Guard:Conflict` and the ones above.
+
+### Changed
+
+- The pages' type is `GuardPagedResultDto<T>`, ABP's page with `groups`; its JSON is the same when a list isn't grouped.
+- An anonymous grant whose role a host later changed so that a rule no longer keeps to its place keeps only its deny
+  rules, and Guard logs it, until the role or the grant is fixed.
+- A reset link that doesn't work says so without naming an hour, since an admin's and an invitation's last longer.
+
 ## [0.8.3] - 2026-11-20
 
 Two additions for the people screens in @abpjs/ui. Nothing to migrate. AbpConnections is unchanged and moves to 0.8.3

@@ -17,8 +17,6 @@ public class GuardSeeder(GuardDb guardDb, AccountProjector projector, IConfigura
     Microsoft.Extensions.Options.IOptions<GuardOptions> options, ILogger<GuardSeeder> logger)
     : ITransientDependency
 {
-    private const int MinAdminPassword = 10;
-
     public Task SeedAsync(CancellationToken cancellationToken = default)
     {
         if (configuration.GetValue("Guard:TwoFactor:Disabled", false))
@@ -43,9 +41,9 @@ public class GuardSeeder(GuardDb guardDb, AccountProjector projector, IConfigura
         if (!await db.DirectoryUsers.AnyAsync(u => u.DirectoryId == GuardConstants.InternalDirectoryId && u.NormalizedUsername == "admin", cancellationToken))
         {
             // The rule every other password keeps; checked when the admin is made, so a site already running still starts.
-            if (adminPassword.Length < MinAdminPassword)
+            if (options.Value.Passwords.Problem(adminPassword) is not null)
             {
-                throw new InvalidOperationException($"Guard:Seed:AdminPassword needs at least {MinAdminPassword} characters, as every password does.");
+                throw new InvalidOperationException($"Guard:Seed:AdminPassword needs at least {options.Value.Passwords.Min} characters, as every password does.");
             }
 
             // A new site starts with the retention periods' defaults confirmed; an upgraded one waits for an admin.

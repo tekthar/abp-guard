@@ -7,8 +7,9 @@ namespace AbpGuard.Controllers;
 
 /// <summary>
 /// A page of accounts, as ABP's lists page (<see cref="PagedAndSortedResultRequestDto"/>): the list's search as
-/// <see cref="Filter"/>, its status, <c>SkipCount</c>, <c>MaxResultCount</c> (25 unless given, at most ABP's 1,000)
-/// and <c>Sorting</c> by username, displayName, email, status, createdAt or lastLoginAt.
+/// <see cref="Filter"/>, its status and directory, <c>SkipCount</c>, <c>MaxResultCount</c> (25 unless given, at most
+/// ABP's 1,000), <c>Sorting</c> by username, displayName, email, status, directory, createdAt or lastLoginAt, and
+/// <see cref="GroupBy"/>.
 /// </summary>
 public sealed class AccountPageInput : PagedAndSortedResultRequestDto
 {
@@ -19,6 +20,12 @@ public sealed class AccountPageInput : PagedAndSortedResultRequestDto
 
     /// <summary>Only accounts in this status (active, disabled…), as the list takes it.</summary>
     public string? Status { get; set; }
+
+    /// <summary>Only accounts a directory owns (0.9.0).</summary>
+    public Guid? DirectoryId { get; set; }
+
+    /// <summary>The list in groups (0.9.0): <c>status</c> or <c>directory</c>, every group's total in the answer's <c>groups</c>.</summary>
+    public string? GroupBy { get; set; }
 }
 
 /// <summary>
@@ -35,6 +42,9 @@ public sealed class GroupPageInput : PagedAndSortedResultRequestDto
     public Guid? DirectoryId { get; set; }
 
     public string? Kind { get; set; }
+
+    /// <summary>The list in groups (0.9.0): <c>kind</c> or <c>directory</c>, every group's total in the answer's <c>groups</c>.</summary>
+    public string? GroupBy { get; set; }
 }
 
 /// <summary>
@@ -77,4 +87,21 @@ public static class GuardPaging
 
     /// <summary>A sortable field: its key's own type is kept, so the database sorts it as it is.</summary>
     public static LambdaExpression By<T, TKey>(Expression<Func<T, TKey>> key) => key;
+
+    /// <summary>
+    /// The sorting a grouped list uses: its group first, then what was asked. A group the list doesn't take is a validation
+    /// error (400), as an unknown sort is.
+    /// </summary>
+    public static string? Grouped(string? groupBy, string? sorting, params string[] groups)
+    {
+        if (string.IsNullOrWhiteSpace(groupBy))
+        {
+            return sorting;
+        }
+
+        string group = groups.FirstOrDefault(g => g.Equals(groupBy.Trim(), StringComparison.OrdinalIgnoreCase))
+            ?? throw new AbpValidationException($"Group by one of {string.Join(", ", groups)}.",
+                [new ValidationResult($"\"{groupBy}\" isn't a group this list takes: {string.Join(", ", groups)}.", ["GroupBy"])]);
+        return string.IsNullOrWhiteSpace(sorting) ? group : $"{group},{sorting}";
+    }
 }

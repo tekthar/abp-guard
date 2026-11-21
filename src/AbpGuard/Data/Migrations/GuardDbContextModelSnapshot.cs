@@ -34,6 +34,9 @@ namespace AbpGuard.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("DeactivatedLocally")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid>("DirectoryId")
                         .HasColumnType("uuid");
 
@@ -55,6 +58,12 @@ namespace AbpGuard.Data.Migrations
 
                     b.Property<DateTime?>("ErasedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("InvitedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("InvitedBy")
+                        .HasColumnType("uuid");
 
                     b.Property<bool>("IsAgent")
                         .HasColumnType("boolean");

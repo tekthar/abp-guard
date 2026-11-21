@@ -67,6 +67,45 @@ public sealed class GuardOptions
 
     /// <summary>Site admins (Guard:Admins:*): whether each must have a strong factor, and how long they have to set one up.</summary>
     public GuardAdminsOptions Admins { get; set; } = new();
+
+    /// <summary>Passwords (Guard:Passwords:*): how long one must be, and how long the links that set one work.</summary>
+    public GuardPasswordOptions Passwords { get; set; } = new();
+}
+
+/// <summary>
+/// What a password Guard keeps must be, and how long the links that set one work: an admin's reset and an invitation (a
+/// person's own reset stays an hour). Every place that takes a password checks it here, and <c>GET /password/policy</c>
+/// tells screens the same rule.
+/// </summary>
+public sealed class GuardPasswordOptions
+{
+    /// <summary>The fewest characters a password may have: 10 by default, never fewer than 8.</summary>
+    public int MinLength { get; set; } = 10;
+
+    /// <summary>The most characters a password may have: 200 by default.</summary>
+    public int MaxLength { get; set; } = 200;
+
+    /// <summary>How long an admin's reset link works, in hours: 24 by default, 1 to 168.</summary>
+    public int AdminResetHours { get; set; } = 24;
+
+    /// <summary>How long an invitation's link works, in days: 7 by default, 1 to 30.</summary>
+    public int InvitationDays { get; set; } = 7;
+
+    /// <summary>The fewest characters, as applied: never below 8.</summary>
+    public int Min => Math.Max(8, MinLength);
+
+    /// <summary>The most characters, as applied: never below <see cref="Min"/>.</summary>
+    public int Max => Math.Max(Min, MaxLength);
+
+    public TimeSpan AdminResetFor => TimeSpan.FromHours(Math.Clamp(AdminResetHours, 1, 168));
+
+    public TimeSpan InvitationFor => TimeSpan.FromDays(Math.Clamp(InvitationDays, 1, 30));
+
+    /// <summary>What's wrong with a password, or null when it fits.</summary>
+    public string? Problem(string? password) =>
+        string.IsNullOrEmpty(password) || password.Length < Min ? $"Passwords need at least {Min} characters."
+        : password.Length > Max ? $"Passwords have at most {Max} characters."
+        : null;
 }
 
 /// <summary>

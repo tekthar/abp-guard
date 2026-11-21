@@ -256,6 +256,13 @@ public class AbilityFactory(GuardDb guardDb, MembershipGraph graph, ILogger<Abil
             {
                 grantRules = grantRules.Where(r => !r.Inverted).ToList();
             }
+
+            // A role anonymous visitors have must keep to its place (0.9.0): one whose rules a host changed since it was
+            // given keeps only its denies until it's fixed.
+            if (grant.PrincipalType == PrincipalType.Anonymous && !AnonymousGrants.Conforms(ruleJson[grant.RoleId], ownScopes[grant.Id], logger, grant.Id))
+            {
+                grantRules = grantRules.Where(r => r.Inverted).ToList();
+            }
             if (grantRules.Count == 0)
             {
                 continue;

@@ -82,6 +82,12 @@ public sealed record AccountDto(
     /// <summary>An agent's account: a service account an automated actor works through, which holds no tokens.</summary>
     public bool IsAgent { get; init; }
 
+    /// <summary>Invited by an admin and not signed in yet (0.9.0): its invitation may be sent again, or cancelled by deleting it.</summary>
+    public bool Invited { get; init; }
+
+    /// <summary>When it was made.</summary>
+    public DateTime CreatedAt { get; init; }
+
     /// <summary>The person's name in other languages; DisplayName is the name as written.</summary>
     public Dictionary<string, string> DisplayNames { get; init; } = [];
 
@@ -90,6 +96,8 @@ public sealed record AccountDto(
         {
             IsAgent = a.IsAgent,
             DisplayNames = a.DisplayNames,
+            Invited = a.InvitedAt is not null && a.LastLoginAt is null,
+            CreatedAt = a.CreatedAt,
         };
 }
 
@@ -117,6 +125,23 @@ public sealed record AccountDetailDto(AccountDto Account, List<IdentityDto> Iden
 public sealed record AccountCanDto(bool Update, bool Lock, bool Unlock, bool Merge, bool ResetSecondFactor, bool Erase, bool ExportData)
 {
     public static AccountCanDto None { get; } = new(false, false, false, false, false, false, false);
+
+    /// <summary>Deactivate the account (the person left, a company's account ended) or activate it again (0.9.0); never an agent's, paused its own way.</summary>
+    public bool Deactivate { get; init; }
+
+    public bool Activate { get; init; }
+
+    /// <summary>
+    /// Mail the person a link to set a new password (0.9.0): an account whose directory Guard keeps, with an address to
+    /// mail. Its invitation is sent again the same way.
+    /// </summary>
+    public bool ResetPassword { get; init; }
+
+    /// <summary>
+    /// Delete the account (0.9.0): only one nobody has used yet (never signed in, kept by no directory but Guard's own, no
+    /// service account). Whether something in the host still holds it is answered when it's sent.
+    /// </summary>
+    public bool Delete { get; init; }
 }
 
 /// <summary>

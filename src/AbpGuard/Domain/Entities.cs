@@ -162,6 +162,18 @@ public class Account : Entity<Guid>
     /// <summary>Locked by an admin in Guard, independent of any directory.</summary>
     public bool LockedLocally { get; set; }
 
+    /// <summary>
+    /// Deactivated by an admin in Guard (the person left), independent of any directory: Inactive until activated again.
+    /// A lock is a security hold on someone still here; this is "no longer with us". Both stop sign-in.
+    /// </summary>
+    public bool DeactivatedLocally { get; set; }
+
+    /// <summary>When an admin invited the person (an account with no password until they set one from the mailed link).</summary>
+    public DateTime? InvitedAt { get; set; }
+
+    /// <summary>Who invited them.</summary>
+    public Guid? InvitedBy { get; set; }
+
     public DateTime? LastLoginAt { get; set; }
     public DateTime CreatedAt { get; private set; }
 

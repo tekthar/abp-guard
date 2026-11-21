@@ -187,7 +187,42 @@ public interface IGrantScopeExpander
 }
 
 /// <summary>What a grant's scope is, for people: a label, and the page where it's managed (a project's members).</summary>
-public sealed record GrantScopeLabel(string Label, string? Href);
+public sealed record GrantScopeLabel(string Label, string? Href)
+{
+    /// <summary>The place's short code beside its name (a project's key, a portal's path), when it has one (0.9.0).</summary>
+    public string? Code { get; init; }
+}
+
+/// <summary>What a place's roles are for: a role anonymous visitors get there (0.9.0); its members' roles (0.10.0).</summary>
+public static class GrantPurposes
+{
+    public const string Anonymous = "anonymous";
+    public const string Members = "members";
+}
+
+/// <summary>
+/// One of a host's places where a role may be given for a purpose (<see cref="GrantPurposes"/>): its scope key and scope
+/// (the grant's, filling the roles' <c>${grant.*}</c> placeholders), its name, and the roles that suit it there.
+/// <see cref="Subjects"/> are what it opens to anonymous visitors (a portal's records and comments; none named: any but
+/// Guard's own); <see cref="ParentKey"/> the place it's under, whose grants reach it.
+/// </summary>
+public sealed record GrantScopeOption(string ScopeKey, System.Text.Json.Nodes.JsonObject Scope, string Label, IReadOnlyList<Guid> RoleIds)
+{
+    public string? Code { get; init; }
+    public string? Href { get; init; }
+    public IReadOnlyList<string> Subjects { get; init; } = [];
+    public string? ParentKey { get; init; }
+}
+
+/// <summary>
+/// Lets a module list its places where roles may be given for a purpose (0.9.0: where anonymous visitors may have a
+/// role), so Guard's screens offer them without knowing the module's model. A place not listed can't be given a role
+/// this way; a module grants its own places itself through <see cref="IRoleCatalog"/> as before.
+/// </summary>
+public interface IGrantScopeCatalog
+{
+    Task<IReadOnlyList<GrantScopeOption>> ListAsync(string purpose, CancellationToken cancellationToken = default);
+}
 
 /// <summary>
 /// Lets a module say what its grant scopes are (a scope key such as "project:{id}"), for lists across modules such as

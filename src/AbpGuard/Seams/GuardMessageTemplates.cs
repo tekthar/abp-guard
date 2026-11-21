@@ -11,6 +11,12 @@ public static class GuardMessageKinds
     /// <summary>A link to choose a new password.</summary>
     public const string PasswordReset = "guard.password-reset";
 
+    /// <summary>A link to choose a new password, sent because an admin asked for one (0.9.0).</summary>
+    public const string PasswordSet = "guard.password-set";
+
+    /// <summary>An invitation: a link to choose the password of an account an admin made (0.9.0).</summary>
+    public const string Invitation = "guard.invitation";
+
     /// <summary>Confirming an address someone added to their account.</summary>
     public const string AddressVerify = "guard.email-verify";
 
@@ -37,7 +43,8 @@ public static class GuardMessageKinds
     /// SecondFactorAdded, SecondFactorRemoved and SecurityAlert): then it's sent as a secret, so the mail log keeps neither its text nor its subject, and an admin
     /// reading it can't use a reset or a code.
     /// </summary>
-    public static bool CarriesSecret(string kind) => kind is SignUpVerify or PasswordReset or AddressVerify or SecondFactorCode or SecondFactorCodeMessage;
+    public static bool CarriesSecret(string kind) =>
+        kind is SignUpVerify or PasswordReset or PasswordSet or Invitation or AddressVerify or SecondFactorCode or SecondFactorCodeMessage;
 }
 
 /// <summary>A template's subject (an email's; null for a message) and body, in Markdown with <c>{{ name }}</c> values.</summary>
@@ -128,6 +135,8 @@ public static class GuardMessageTemplates
     [
         Services.SelfServiceMail.VerifyDefinition,
         Services.SelfServiceMail.ResetDefinition,
+        Services.SelfServiceMail.PasswordSetDefinition,
+        Services.SelfServiceMail.InvitationDefinition,
         Services.AddressMail.VerifyDefinition,
         Services.AddressMail.ChangedDefinition,
         Services.TwoFactor.SecondFactorMail.CodeDefinition,
