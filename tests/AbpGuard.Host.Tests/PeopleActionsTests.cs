@@ -152,6 +152,33 @@ public sealed partial class SecurityTests
     }
 
     [Fact]
+    public async Task A_merge_hands_the_people_an_account_invited_to_the_survivor()
+    {
+        Session admin = await SignInAsync("admin", AdminPassword);
+        Guid inviting = await CreateRoleAsync(admin, "inviter", """{"action":"create","subject":"Account"}""");
+        Guid ines = await CreateAccountAsync(admin, "ines", "ines@example.test");
+        Guid survivor = await CreateAccountAsync(admin, "ines-new", "ines-new@example.test");
+        await GrantAsync(admin, inviting, ines, new { });
+
+        Session i = await SignInAsync("ines", Password);
+        (HttpStatusCode code, string body) = await i.SendAsync(HttpMethod.Post, "/api/guard/accounts/invitations", new { people = new[] { new { email = "guest@example.test" } } });
+        Assert.True(code == HttpStatusCode.OK, body);
+        Guid guest = JsonDocument.Parse(body).RootElement.GetProperty("invited")[0].GetProperty("id").GetGuid();
+        Assert.Equal(ines, await InvitedByAsync(guest));
+
+        (code, body) = await admin.SendAsync(HttpMethod.Post, $"/api/guard/accounts/{ines}/merge", new { survivorId = survivor, confirm = "ines" });
+        Assert.True(code == HttpStatusCode.OK, body);
+        Assert.Equal(survivor, await InvitedByAsync(guest));
+    }
+
+    private async Task<Guid?> InvitedByAsync(Guid accountId)
+    {
+        using IServiceScope scope = _factory!.Services.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<Services.GuardDb>().RunAsync(db =>
+            Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.SingleAsync(db.Accounts.Where(a => a.Id == accountId).Select(a => a.InvitedBy)));
+    }
+
+    [Fact]
     public async Task Anonymous_visitors_get_a_role_only_where_the_host_lists_it_and_only_one_that_keeps_to_it()
     {
         TestSubjects.EnsureRegistered();

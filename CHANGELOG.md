@@ -25,6 +25,13 @@ change the API.
 The three projects aren't packed (`IsPackable` false) until the release that carries them; nuget.org's Trusted
 Publishing must take `AbpNotify*` before that tag.
 
+## [0.9.1] - 2026-11-21
+
+### Fixed
+
+- A merge hands the people the merged account invited to the survivor (`accounts.InvitedBy`), as it does the addresses
+  and tokens it added. 0.9.0 left them naming the merged account.
+
 ## [0.9.0] - 2026-11-21
 
 The people actions a site's admin screens need: deactivating someone who left, deleting an account nobody used,
